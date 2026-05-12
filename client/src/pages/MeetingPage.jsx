@@ -1,16 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import ControlBar from '@/components/ControlBar';
 import TopBar from '@/components/TopBar';
 import VideoTile from '@/components/VideoTile';
+import useWebRTC from '@/hooks/useWebRTC';
 import './MeetingPage.css';
-
-const MOCK_PARTICIPANTS = [
-  { id: 'host', name: 'Ari Pratama', isMuted: false, isCameraOff: false, isLocal: true },
-  { id: 'p1', name: 'Nadia Putri', isMuted: true, isCameraOff: false, isLocal: false },
-  { id: 'p2', name: 'Rizky Adi', isMuted: false, isCameraOff: true, isLocal: false },
-  { id: 'p3', name: 'Citra Lestari', isMuted: false, isCameraOff: false, isLocal: false },
-];
 
 function formatDuration(totalSeconds) {
   const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
@@ -22,10 +16,18 @@ function formatDuration(totalSeconds) {
 
 function MeetingPage() {
   const { roomId = 'Unknown' } = useParams();
+  const navigate = useNavigate();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const {
+    participants,
+    isMuted,
+    isCameraOff,
+    error,
+    toggleMute,
+    toggleCamera,
+    leaveMeeting,
+  } = useWebRTC(roomId);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -37,30 +39,14 @@ function MeetingPage() {
 
   const duration = useMemo(() => formatDuration(elapsedSeconds), [elapsedSeconds]);
 
-  const participants = useMemo(
-    () =>
-      MOCK_PARTICIPANTS.map((participant) =>
-        participant.isLocal
-          ? {
-              ...participant,
-              isMuted,
-              isCameraOff,
-            }
-          : participant
-      ),
-    [isCameraOff, isMuted]
-  );
-
   const handleToggleMute = () => {
-    const nextValue = !isMuted;
-    setIsMuted(nextValue);
-    console.log(nextValue ? 'Mic muted' : 'Mic unmuted');
+    toggleMute();
+    console.log(isMuted ? 'Mic unmuted' : 'Mic muted');
   };
 
   const handleToggleCamera = () => {
-    const nextValue = !isCameraOff;
-    setIsCameraOff(nextValue);
-    console.log(nextValue ? 'Camera turned off' : 'Camera turned on');
+    toggleCamera();
+    console.log(isCameraOff ? 'Camera turned on' : 'Camera turned off');
   };
 
   const handleToggleRecording = () => {
@@ -75,6 +61,8 @@ function MeetingPage() {
 
   const handleLeaveMeeting = () => {
     console.log(`Leaving room ${roomId}`);
+    leaveMeeting();
+    navigate('/');
   };
 
   return (
@@ -86,6 +74,7 @@ function MeetingPage() {
       />
 
       <section className="meeting-grid" aria-label="Meeting participants">
+        {error ? <p className="meeting-error">{error}</p> : null}
         {participants.map((participant) => (
           <VideoTile
             key={participant.id}
@@ -93,6 +82,7 @@ function MeetingPage() {
             isMuted={participant.isMuted}
             isCameraOff={participant.isCameraOff}
             isLocal={participant.isLocal}
+            stream={participant.stream}
           />
         ))}
       </section>

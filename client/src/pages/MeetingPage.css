@@ -80,6 +80,15 @@
   align-content: start;
 }
 
+.meeting-error {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(248, 113, 113, 0.36);
+  border-radius: 16px;
+  background: rgba(127, 29, 29, 0.45);
+  color: #fecaca;
+}
+
 .video-tile {
   min-height: 220px;
   display: flex;
@@ -100,6 +109,7 @@
 
 .video-tile__screen {
   flex: 1;
+  position: relative;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -110,7 +120,18 @@
     linear-gradient(180deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.96));
 }
 
+.video-tile__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #020617;
+}
+
 .video-tile__avatar {
+  position: relative;
+  z-index: 1;
   width: 64px;
   height: 64px;
   display: grid;
@@ -123,6 +144,8 @@
 }
 
 .video-tile__status {
+  position: relative;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   gap: 10px;
