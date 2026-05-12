@@ -22,7 +22,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/clips', express.static(path.join(__dirname, '../clips')));
 
 // Setup Routes
-app.use('/api/meetings', meetingsRouter);
+app.use('/api', meetingsRouter);
 
 // Endpoint /health untuk cek status server
 app.get('/health', (req, res) => {

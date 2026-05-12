@@ -79,6 +79,17 @@ const getMeetingById = (id) => {
   return meeting;
 };
 
+const createClip = (meetingId, label, startTime, endTime, filePath) => {
+  const id = uuidv4();
+  const stmt = db.prepare('INSERT INTO clips (id, meeting_id, label, start_time, end_time, file_path) VALUES (?, ?, ?, ?, ?, ?)');
+  stmt.run(id, meetingId, label, startTime, endTime, filePath);
+  return getClipById(id);
+};
+
+const getClipById = (id) => {
+  return db.prepare('SELECT * FROM clips WHERE id = ?').get(id);
+};
+
 module.exports = {
   db,
   createMeeting,
@@ -86,5 +97,7 @@ module.exports = {
   endMeeting,
   createMarker,
   getAllMeetings,
-  getMeetingById
+  getMeetingById,
+  createClip,
+  getClipById
 };
