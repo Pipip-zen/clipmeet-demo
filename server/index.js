@@ -6,11 +6,23 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
+const path = require('path');
+const meetingsRouter = require('./routes/meetings');
+
 // Setup CORS
 app.use(cors({
   origin: 'http://localhost:5173', // Origin client
-  methods: ['GET', 'POST']
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']
 }));
+
+app.use(express.json());
+
+// Serve static files for uploads and clips
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/clips', express.static(path.join(__dirname, '../clips')));
+
+// Setup Routes
+app.use('/api/meetings', meetingsRouter);
 
 // Endpoint /health untuk cek status server
 app.get('/health', (req, res) => {

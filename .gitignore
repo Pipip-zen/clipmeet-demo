@@ -20,6 +20,7 @@ PRD.md
 *.csr
 id_rsa
 id_ed25519
+*.sqlite
 
 # Logs and temp files
 *.log
