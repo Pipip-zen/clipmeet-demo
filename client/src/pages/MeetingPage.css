@@ -252,6 +252,112 @@
   border-color: rgba(248, 113, 113, 0.45);
 }
 
+.marker-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 112px;
+  z-index: 10;
+  width: min(360px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 24px 64px rgba(2, 6, 23, 0.45);
+  backdrop-filter: blur(18px);
+}
+
+.marker-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.marker-panel__eyebrow {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.marker-panel__title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.marker-panel__close {
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.marker-panel__form {
+  display: grid;
+  gap: 10px;
+}
+
+.marker-panel__input,
+.marker-panel__button {
+  min-height: 42px;
+  border-radius: 12px;
+  font: inherit;
+}
+
+.marker-panel__input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(30, 41, 59, 0.92);
+  color: #f8fafc;
+  padding: 0 12px;
+}
+
+.marker-panel__button {
+  border: 1px solid rgba(96, 165, 250, 0.38);
+  background: rgba(37, 99, 235, 0.84);
+  color: #eff6ff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.marker-panel__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.marker-panel__error {
+  margin: 12px 0 0;
+  color: #fecaca;
+  font-size: 0.9rem;
+}
+
+.marker-panel__list {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.marker-panel__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.72);
+  color: #e2e8f0;
+}
+
+.marker-panel__item time {
+  color: #93c5fd;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (min-width: 700px) {
   .meeting-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -293,5 +399,10 @@
   .control-button {
     flex: 1 1 160px;
     min-width: 0;
+  }
+
+  .marker-panel {
+    right: 16px;
+    bottom: 128px;
   }
 }

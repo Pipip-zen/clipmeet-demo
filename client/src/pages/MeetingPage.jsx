@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ControlBar from '@/components/ControlBar';
+import MarkerPanel from '@/components/MarkerPanel';
 import TopBar from '@/components/TopBar';
 import VideoTile from '@/components/VideoTile';
+import useRecorder from '@/hooks/useRecorder';
 import useWebRTC from '@/hooks/useWebRTC';
 import './MeetingPage.css';
 
@@ -18,7 +20,7 @@ function MeetingPage() {
   const { roomId = 'Unknown' } = useParams();
   const navigate = useNavigate();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
+  const [isMarkerPanelOpen, setIsMarkerPanelOpen] = useState(false);
   const {
     participants,
     isMuted,
@@ -28,6 +30,15 @@ function MeetingPage() {
     toggleCamera,
     leaveMeeting,
   } = useWebRTC(roomId);
+  const localStream = participants.find((participant) => participant.isLocal)?.stream;
+  const {
+    isRecording,
+    meetingId,
+    recordingStartTime,
+    error: recorderError,
+    startRecording,
+    stopRecording,
+  } = useRecorder(localStream, roomId);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -49,18 +60,32 @@ function MeetingPage() {
     console.log(isCameraOff ? 'Camera turned on' : 'Camera turned off');
   };
 
-  const handleToggleRecording = () => {
-    const nextValue = !isRecording;
-    setIsRecording(nextValue);
-    console.log(nextValue ? 'Recording started' : 'Recording stopped');
+  const handleToggleRecording = async () => {
+    try {
+      if (isRecording) {
+        setIsMarkerPanelOpen(false);
+        await stopRecording();
+        console.log('Recording stopped');
+        return;
+      }
+
+      await startRecording();
+      console.log('Recording started');
+    } catch (recordingError) {
+      console.error('Recording action failed:', recordingError);
+    }
   };
 
   const handleAddMarker = () => {
-    console.log('Marker added');
+    setIsMarkerPanelOpen((isOpen) => !isOpen);
+    console.log('Marker panel toggled');
   };
 
-  const handleLeaveMeeting = () => {
+  const handleLeaveMeeting = async () => {
     console.log(`Leaving room ${roomId}`);
+    if (isRecording) {
+      await stopRecording();
+    }
     leaveMeeting();
     navigate('/');
   };
@@ -75,6 +100,7 @@ function MeetingPage() {
 
       <section className="meeting-grid" aria-label="Meeting participants">
         {error ? <p className="meeting-error">{error}</p> : null}
+        {recorderError ? <p className="meeting-error">{recorderError}</p> : null}
         {participants.map((participant) => (
           <VideoTile
             key={participant.id}
@@ -86,6 +112,14 @@ function MeetingPage() {
           />
         ))}
       </section>
+
+      {isMarkerPanelOpen && isRecording ? (
+        <MarkerPanel
+          meetingId={meetingId}
+          recordingStartTime={recordingStartTime}
+          onClose={() => setIsMarkerPanelOpen(false)}
+        />
+      ) : null}
 
       <ControlBar
         isMuted={isMuted}
