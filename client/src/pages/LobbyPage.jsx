@@ -1,14 +1,53 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { io } from 'socket.io-client';
 import useLocalMedia from '@/hooks/useLocalMedia';
 import './LobbyPage.css';
+
+const SIGNALING_SERVER_URL = 'http://localhost:3001';
+
+function readRoomName(roomCode) {
+  try {
+    const rooms = JSON.parse(localStorage.getItem('clipmeet_rooms')) || {};
+    return rooms[roomCode] || roomCode;
+  } catch {
+    return roomCode;
+  }
+}
 
 function LobbyPage() {
   const { roomCode = '------' } = useParams();
   const navigate = useNavigate();
   const videoRef = useRef(null);
   const [participantName, setParticipantName] = useState('');
+  const [roomName, setRoomName] = useState(roomCode);
   const { stream, isCamOn, isMicOn, toggleCam, toggleMic, error } = useLocalMedia();
+
+  useEffect(() => {
+    setRoomName(readRoomName(roomCode));
+  }, [roomCode]);
+
+  useEffect(() => {
+    const socket = io(SIGNALING_SERVER_URL, {
+      transports: ['websocket'],
+    });
+
+    socket.on('connect', () => {
+      socket.emit('get-room-info', roomCode);
+    });
+
+    socket.on('room-info', (roomInfo) => {
+      if (roomInfo.roomCode !== roomCode || !roomInfo.roomName) {
+        return;
+      }
+
+      setRoomName(roomInfo.roomName);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [roomCode]);
 
   useEffect(() => {
     if (!videoRef.current) {
@@ -36,6 +75,14 @@ function LobbyPage() {
         isMicOn,
       })
     );
+    localStorage.setItem('clipmeet_participant_name', nextParticipantName);
+    localStorage.setItem(
+      'clipmeet_current_room',
+      JSON.stringify({
+        roomCode,
+        roomName,
+      })
+    );
 
     stopLobbyTracks();
     navigate(`/room/${roomCode}`);
@@ -46,7 +93,8 @@ function LobbyPage() {
       <section className="lobby-card">
         <header className="lobby-header">
           <p className="lobby-eyebrow">Room Code</p>
-          <h1>{roomCode}</h1>
+          <h1>{roomName}</h1>
+          <p className="lobby-room-code">{roomCode}</p>
         </header>
 
         <div className="lobby-preview">

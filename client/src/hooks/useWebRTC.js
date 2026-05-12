@@ -6,13 +6,29 @@ const RTC_CONFIGURATION = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };
 
-function buildPeerLabel(peerId) {
-  return `Peer ${peerId.slice(0, 6)}`;
+function buildPeerLabel(peerId, participantName) {
+  return participantName || `Peer ${peerId.slice(0, 6)}`;
 }
 
-function useWebRTC(roomId) {
+function normalizePeer(peer) {
+  if (typeof peer === 'string') {
+    return {
+      socketId: peer,
+      participantName: '',
+    };
+  }
+
+  return {
+    socketId: peer.socketId,
+    participantName: peer.participantName || '',
+  };
+}
+
+function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
   const [localStream, setLocalStream] = useState(null);
   const [remoteParticipants, setRemoteParticipants] = useState([]);
+  const [peerNames, setPeerNames] = useState({});
+  const [serverRoomName, setServerRoomName] = useState(roomName);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [error, setError] = useState('');
@@ -21,7 +37,20 @@ function useWebRTC(roomId) {
   const socketRef = useRef(null);
   const peerConnectionsRef = useRef({});
   const remoteStreamsRef = useRef({});
+  const peerNamesRef = useRef({});
   const hasLeftRef = useRef(false);
+
+  const setPeerName = useCallback((peerId, name) => {
+    if (!peerId || !name) {
+      return;
+    }
+
+    peerNamesRef.current = {
+      ...peerNamesRef.current,
+      [peerId]: name,
+    };
+    setPeerNames(peerNamesRef.current);
+  }, []);
 
   const removePeer = useCallback((peerId) => {
     const connection = peerConnectionsRef.current[peerId];
@@ -33,10 +62,12 @@ function useWebRTC(roomId) {
     }
 
     delete remoteStreamsRef.current[peerId];
+    delete peerNamesRef.current[peerId];
+    setPeerNames({ ...peerNamesRef.current });
     setRemoteParticipants((current) => current.filter((participant) => participant.id !== peerId));
   }, []);
 
-  const createPeerConnection = useCallback((peerId) => {
+  const createPeerConnection = useCallback((peerId, peerName = '') => {
     const existingConnection = peerConnectionsRef.current[peerId];
     if (existingConnection) {
       return existingConnection;
@@ -69,7 +100,7 @@ function useWebRTC(roomId) {
       setRemoteParticipants((current) => {
         const nextParticipant = {
           id: peerId,
-          name: buildPeerLabel(peerId),
+          name: buildPeerLabel(peerId, peerNamesRef.current[peerId] || peerName),
           stream,
           isLocal: false,
           isMuted: false,
@@ -154,30 +185,44 @@ function useWebRTC(roomId) {
         socketRef.current = socket;
 
         socket.on('connect', () => {
-          socket.emit('join-room', roomId);
+          socket.emit('join-room', {
+            roomCode,
+            participantName,
+            roomName,
+          });
+        });
+
+        socket.on('room-info', (roomInfo) => {
+          if (roomInfo.roomCode === roomCode && roomInfo.roomName) {
+            setServerRoomName(roomInfo.roomName);
+          }
         });
 
         socket.on('existing-peers', async (existingPeers) => {
-          for (const peerId of existingPeers) {
-            const connection = createPeerConnection(peerId);
+          for (const peer of existingPeers.map(normalizePeer)) {
+            setPeerName(peer.socketId, peer.participantName);
+            const connection = createPeerConnection(peer.socketId, peer.participantName);
             const offer = await connection.createOffer();
             await connection.setLocalDescription(offer);
 
             socket.emit('offer', {
-              target: peerId,
+              target: peer.socketId,
+              participantName,
               offer,
             });
           }
         });
 
-        socket.on('offer', async ({ caller, offer }) => {
-          const connection = createPeerConnection(caller);
+        socket.on('offer', async ({ caller, offer, participantName: peerName }) => {
+          setPeerName(caller, peerName);
+          const connection = createPeerConnection(caller, peerName);
           await connection.setRemoteDescription(new RTCSessionDescription(offer));
           const answer = await connection.createAnswer();
           await connection.setLocalDescription(answer);
 
           socket.emit('answer', {
             target: caller,
+            participantName,
             answer,
           });
         });
@@ -204,8 +249,8 @@ function useWebRTC(roomId) {
           }
         });
 
-        socket.on('peer-left', (peerId) => {
-          removePeer(peerId);
+        socket.on('peer-left', (payload) => {
+          removePeer(typeof payload === 'string' ? payload : payload.socketId);
         });
       } catch (mediaError) {
         console.error('Failed to initialize WebRTC:', mediaError);
@@ -221,7 +266,7 @@ function useWebRTC(roomId) {
       isMounted = false;
       cleanup();
     };
-  }, [cleanup, createPeerConnection, removePeer, roomId]);
+  }, [cleanup, createPeerConnection, participantName, removePeer, roomCode, roomName, setPeerName]);
 
   const toggleMute = useCallback(() => {
     const audioTrack = localStreamRef.current?.getAudioTracks()[0];
@@ -246,7 +291,7 @@ function useWebRTC(roomId) {
   const participants = useMemo(() => {
     const localParticipant = {
       id: 'local',
-      name: 'You',
+      name: `You (${participantName})`,
       stream: localStream,
       isLocal: true,
       isMuted,
@@ -254,10 +299,12 @@ function useWebRTC(roomId) {
     };
 
     return [localParticipant, ...remoteParticipants];
-  }, [isCameraOff, isMuted, localStream, remoteParticipants]);
+  }, [isCameraOff, isMuted, localStream, participantName, remoteParticipants]);
 
   return {
     participants,
+    peerNames,
+    roomName: serverRoomName,
     isMuted,
     isCameraOff,
     error,

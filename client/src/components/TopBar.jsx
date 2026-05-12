@@ -1,9 +1,9 @@
-function TopBar({ roomId, participantCount, duration }) {
+function TopBar({ roomName, participantCount, duration }) {
   return (
     <header className="meeting-topbar">
       <div>
         <p className="meeting-topbar__eyebrow">Live meeting</p>
-        <h1 className="meeting-topbar__title">Room {roomId}</h1>
+        <h1 className="meeting-topbar__title">{roomName}</h1>
       </div>
 
       <div className="meeting-topbar__stats">

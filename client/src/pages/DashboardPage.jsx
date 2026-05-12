@@ -15,11 +15,29 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function readStoredRooms() {
+  try {
+    return JSON.parse(localStorage.getItem('clipmeet_rooms')) || {};
+  } catch {
+    return {};
+  }
+}
+
+function getMeetingTitle(meeting, storedRooms) {
+  const storedRoomName = storedRooms[meeting.room_id];
+  if (storedRoomName) {
+    return `Meeting ${storedRoomName}`;
+  }
+
+  return meeting.title || `Meeting ${meeting.room_id}`;
+}
+
 function DashboardPage() {
   const navigate = useNavigate();
   const [meetings, setMeetings] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const storedRooms = readStoredRooms();
 
   useEffect(() => {
     const fetchMeetings = async () => {
@@ -68,7 +86,7 @@ function DashboardPage() {
             <article className="meeting-card" key={meeting.id}>
               <div>
                 <h2 className="meeting-card__title">
-                  {meeting.title || `Meeting - ${meeting.room_id}`}
+                  {getMeetingTitle(meeting, storedRooms)}
                 </h2>
                 <p className="meeting-card__date">{formatDate(meeting.started_at)}</p>
               </div>

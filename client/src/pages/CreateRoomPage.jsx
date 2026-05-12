@@ -7,6 +7,14 @@ const generateRoomCode = () =>
     String.fromCharCode(65 + Math.floor(Math.random() * 26))
   ).join('');
 
+function readStoredRooms() {
+  try {
+    return JSON.parse(localStorage.getItem('clipmeet_rooms')) || {};
+  } catch {
+    return {};
+  }
+}
+
 function CreateRoomPage() {
   const navigate = useNavigate();
   const [roomName, setRoomName] = useState('');
@@ -27,6 +35,15 @@ function CreateRoomPage() {
     if (!nextRoomName || !roomCode) {
       return;
     }
+
+    const storedRooms = readStoredRooms();
+    localStorage.setItem(
+      'clipmeet_rooms',
+      JSON.stringify({
+        ...storedRooms,
+        [roomCode]: nextRoomName,
+      })
+    );
 
     localStorage.setItem(
       'clipmeet.pendingRoom',

@@ -8,6 +8,23 @@ import useRecorder from '@/hooks/useRecorder';
 import useWebRTC from '@/hooks/useWebRTC';
 import './MeetingPage.css';
 
+function readJsonStorage(key, fallback) {
+  try {
+    return JSON.parse(localStorage.getItem(key)) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readStoredRoomName(roomCode) {
+  try {
+    const rooms = JSON.parse(localStorage.getItem('clipmeet_rooms')) || {};
+    return rooms[roomCode] || '';
+  } catch {
+    return '';
+  }
+}
+
 function formatDuration(totalSeconds) {
   const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
   const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
@@ -22,15 +39,24 @@ function MeetingPage() {
   const navigate = useNavigate();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isMarkerPanelOpen, setIsMarkerPanelOpen] = useState(false);
+  const currentRoom = readJsonStorage('clipmeet_current_room', {});
+  const participantName = localStorage.getItem('clipmeet_participant_name') || 'Guest';
+  const localRoomName =
+    currentRoom.roomCode === resolvedRoomId && currentRoom.roomName
+      ? currentRoom.roomName
+      : readStoredRoomName(resolvedRoomId) || resolvedRoomId;
   const {
     participants,
+    peerNames,
+    roomName: syncedRoomName,
     isMuted,
     isCameraOff,
     error,
     toggleMute,
     toggleCamera,
     leaveMeeting,
-  } = useWebRTC(resolvedRoomId);
+  } = useWebRTC(resolvedRoomId, participantName, localRoomName);
+  const roomName = syncedRoomName || localRoomName;
   const localStream = participants.find((participant) => participant.isLocal)?.stream;
   const {
     isRecording,
@@ -39,7 +65,7 @@ function MeetingPage() {
     error: recorderError,
     startRecording,
     stopRecording,
-  } = useRecorder(localStream, resolvedRoomId);
+  } = useRecorder(localStream, resolvedRoomId, roomName);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -94,7 +120,7 @@ function MeetingPage() {
   return (
     <main className="meeting-page">
       <TopBar
-        roomId={resolvedRoomId}
+        roomName={roomName}
         participantCount={participants.length}
         duration={duration}
       />
@@ -105,7 +131,11 @@ function MeetingPage() {
         {participants.map((participant) => (
           <VideoTile
             key={participant.id}
-            name={participant.name}
+            name={
+              participant.isLocal
+                ? `You (${participantName})`
+                : peerNames[participant.id] || participant.name
+            }
             isMuted={participant.isMuted}
             isCameraOff={participant.isCameraOff}
             isLocal={participant.isLocal}

@@ -21,6 +21,27 @@ function formatTimestamp(seconds) {
   return `${minutes}:${remainingSeconds}`;
 }
 
+function readStoredRooms() {
+  try {
+    return JSON.parse(localStorage.getItem('clipmeet_rooms')) || {};
+  } catch {
+    return {};
+  }
+}
+
+function getMeetingTitle(meeting, storedRooms) {
+  if (!meeting) {
+    return 'Meeting Detail';
+  }
+
+  const storedRoomName = storedRooms[meeting.room_id];
+  if (storedRoomName) {
+    return `Meeting ${storedRoomName}`;
+  }
+
+  return meeting.title || `Meeting ${meeting.room_id}`;
+}
+
 function MeetingDetailPage() {
   const { meetingId } = useParams();
   const videoRef = useRef(null);
@@ -57,6 +78,7 @@ function MeetingDetailPage() {
 
   const recordingUrl = useMemo(() => toServerUrl(meeting?.file_path), [meeting]);
   const markers = useMemo(() => meeting?.markers || [], [meeting]);
+  const storedRooms = readStoredRooms();
 
   const seekToMarker = (timestampSeconds) => {
     if (!videoRef.current || !recordingUrl) {
@@ -84,7 +106,7 @@ function MeetingDetailPage() {
         <header className="detail-header">
           <div>
             <h1 className="detail-title">
-              {meeting?.title || (meeting ? `Meeting - ${meeting.room_id}` : 'Meeting Detail')}
+              {getMeetingTitle(meeting, storedRooms)}
             </h1>
             <p className="detail-subtitle">{meetingId}</p>
           </div>

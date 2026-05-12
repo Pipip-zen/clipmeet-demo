@@ -38,34 +38,59 @@ const io = new Server(server, {
 });
 
 // In-memory state untuk menyimpan room dan user
-// rooms: Map<roomId, Set<socketId>>
+// rooms: Map<roomCode, Map<socketId, participantName>>
 const rooms = new Map();
-// socketToRoom: Map<socketId, roomId>
+const roomNames = new Map();
+// socketToRoom: Map<socketId, roomCode>
 const socketToRoom = new Map();
+const socketToParticipantName = new Map();
 
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
-  // Event saat user join room
-  socket.on('join-room', (roomId) => {
-    socket.join(roomId);
+  socket.on('get-room-info', (roomCode) => {
+    socket.emit('room-info', {
+      roomCode,
+      roomName: roomNames.get(roomCode) || roomCode,
+    });
+  });
 
-    if (!rooms.has(roomId)) {
-      rooms.set(roomId, new Set());
+  // Event saat user join room
+  socket.on('join-room', (payload) => {
+    const roomCode = typeof payload === 'string' ? payload : payload.roomCode;
+    const participantName =
+      typeof payload === 'string' ? 'Guest' : payload.participantName || 'Guest';
+    const roomName = typeof payload === 'string' ? roomCode : payload.roomName || roomCode;
+
+    socket.join(roomCode);
+
+    if (!rooms.has(roomCode)) {
+      rooms.set(roomCode, new Map());
+    }
+    if (roomName && roomName !== roomCode) {
+      roomNames.set(roomCode, roomName);
     }
 
-    const usersInRoom = rooms.get(roomId);
+    const usersInRoom = rooms.get(roomCode);
     
     // Ambil daftar user yang sudah ada di room (kecuali user yang baru join)
-    const existingPeers = Array.from(usersInRoom);
+    const existingPeers = Array.from(usersInRoom.entries()).map(([socketId, name]) => ({
+      socketId,
+      participantName: name,
+    }));
 
     // Tambahkan user baru ke dalam state
-    usersInRoom.add(socket.id);
-    socketToRoom.set(socket.id, roomId);
+    usersInRoom.set(socket.id, participantName);
+    socketToRoom.set(socket.id, roomCode);
+    socketToParticipantName.set(socket.id, participantName);
 
-    console.log(`User ${socket.id} joined room ${roomId}`);
+    console.log(`User ${socket.id} joined room ${roomCode}`);
 
     // Emit daftar socket ID yang sudah ada ke user yang baru join
+    socket.emit('room-info', {
+      roomCode,
+      roomName: roomNames.get(roomCode) || roomName || roomCode,
+    });
     socket.emit('existing-peers', existingPeers);
     
     // Optional: memberitahu user lain bahwa ada user baru yang join
@@ -73,17 +98,19 @@ io.on('connection', (socket) => {
   });
 
   // Event meneruskan WebRTC Offer
-  socket.on('offer', ({ target, caller, offer }) => {
+  socket.on('offer', ({ target, caller, participantName, offer }) => {
     io.to(target).emit('offer', {
       caller: caller || socket.id,
+      participantName: participantName || socketToParticipantName.get(socket.id) || 'Guest',
       offer
     });
   });
 
   // Event meneruskan WebRTC Answer
-  socket.on('answer', ({ target, caller, answer }) => {
+  socket.on('answer', ({ target, caller, participantName, answer }) => {
     io.to(target).emit('answer', {
       caller: caller || socket.id,
+      participantName: participantName || socketToParticipantName.get(socket.id) || 'Guest',
       answer
     });
   });
@@ -100,21 +127,23 @@ io.on('connection', (socket) => {
   const handleLeaveRoom = () => {
     const roomId = socketToRoom.get(socket.id);
     if (roomId) {
-      const usersInRoom = rooms.get(roomId);
-      if (usersInRoom) {
+        const usersInRoom = rooms.get(roomId);
+        if (usersInRoom) {
         usersInRoom.delete(socket.id);
         if (usersInRoom.size === 0) {
           rooms.delete(roomId); // Hapus room jika kosong
+          roomNames.delete(roomId);
         }
       }
       
       socketToRoom.delete(socket.id);
+      socketToParticipantName.delete(socket.id);
       socket.leave(roomId);
       
       console.log(`User ${socket.id} left room ${roomId}`);
       
       // Broadcast event peer-left ke semua user di room
-      socket.broadcast.to(roomId).emit('peer-left', socket.id);
+      socket.broadcast.to(roomId).emit('peer-left', { socketId: socket.id });
     }
   };
 

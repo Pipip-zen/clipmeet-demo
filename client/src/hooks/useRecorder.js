@@ -28,7 +28,7 @@ async function assertOk(response, fallbackMessage) {
   throw new Error(message);
 }
 
-function useRecorder(stream, roomId) {
+function useRecorder(stream, roomId, meetingTitle = '') {
   const [isRecording, setIsRecording] = useState(false);
   const [meetingId, setMeetingId] = useState(null);
   const [recordingStartTime, setRecordingStartTime] = useState(null);
@@ -41,19 +41,23 @@ function useRecorder(stream, roomId) {
   const recordingStartTimeRef = useRef(null);
 
   const createMeeting = useCallback(async () => {
+    const resolvedTitle = meetingTitle && meetingTitle !== roomId
+      ? `Meeting ${meetingTitle}`
+      : `Meeting ${roomId}`;
+
     const response = await fetch(`${API_BASE_URL}/meetings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        title: `Meeting ${roomId}`,
+        title: resolvedTitle,
         roomId,
       }),
     });
 
     return assertOk(response, 'Failed to create meeting.');
-  }, [roomId]);
+  }, [meetingTitle, roomId]);
 
   const uploadRecording = useCallback(async (id, blob) => {
     const formData = new FormData();
