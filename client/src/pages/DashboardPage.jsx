@@ -1,21 +1,89 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import './DashboardPage.css';
+
+const API_BASE_URL = 'http://localhost:3001/api';
+
+function formatDate(value) {
+  if (!value) {
+    return '-';
+  }
+
+  return new Intl.DateTimeFormat('id-ID', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
 
 function DashboardPage() {
+  const navigate = useNavigate();
+  const [meetings, setMeetings] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const fetchMeetings = async () => {
+      try {
+        setIsLoading(true);
+        setError('');
+
+        const response = await fetch(`${API_BASE_URL}/meetings`);
+        if (!response.ok) {
+          const body = await response.json();
+          throw new Error(body.error || 'Failed to load meetings.');
+        }
+
+        const data = await response.json();
+        setMeetings(data);
+      } catch (fetchError) {
+        console.error('Failed to load meetings:', fetchError);
+        setError(fetchError.message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchMeetings();
+  }, []);
+
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-muted/20 p-6 text-foreground">
-      <div className="max-w-4xl w-full text-center space-y-8">
-        <h1 className="text-4xl font-extrabold tracking-tight">Dashboard</h1>
-        <p className="text-lg text-muted-foreground">Manage your meetings and clips here.</p>
-        
-        <div className="mt-8">
-          <Button asChild variant="default">
-            <Link to="/">Back to Home</Link>
-          </Button>
-        </div>
+    <main className="dashboard-page">
+      <div className="dashboard-shell">
+        <header className="dashboard-header">
+          <h1 className="dashboard-title">Dashboard</h1>
+          <Link className="dashboard-button" to="/">
+            Kembali ke Home
+          </Link>
+        </header>
+
+        {isLoading ? <p className="dashboard-empty">Memuat rekaman...</p> : null}
+        {error ? <p className="dashboard-error">{error}</p> : null}
+
+        {!isLoading && !error && meetings.length === 0 ? (
+          <p className="dashboard-empty">Belum ada rekaman</p>
+        ) : null}
+
+        <section className="meeting-list" aria-label="Daftar meeting">
+          {meetings.map((meeting) => (
+            <article className="meeting-card" key={meeting.id}>
+              <div>
+                <h2 className="meeting-card__title">
+                  {meeting.title || `Meeting - ${meeting.room_id}`}
+                </h2>
+                <p className="meeting-card__date">{formatDate(meeting.started_at)}</p>
+              </div>
+              <button
+                type="button"
+                className="meeting-card__button"
+                onClick={() => navigate(`/dashboard/${meeting.id}`)}
+              >
+                Lihat Detail
+              </button>
+            </article>
+          ))}
+        </section>
       </div>
-    </div>
+    </main>
   );
 }
 
