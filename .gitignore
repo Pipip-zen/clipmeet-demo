@@ -1,0 +1,43 @@
+# Agent and vibe-coding artifacts
+.agents/
+skills-lock.json
+AGENTS.md
+CONTEXT.md
+PRD.md
+
+# Environment and secret files
+.env
+.env.*
+*.env
+*.local
+*.secret
+*.secrets
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+id_rsa
+id_ed25519
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Node.js build artifacts
+node_modules/
+dist/
+
+# Local media artifacts
+uploads/*
+!uploads/.gitkeep
+clips/*
+!clips/.gitkeep
+
+# Editor and IDE
+.vscode/
+.idea/
