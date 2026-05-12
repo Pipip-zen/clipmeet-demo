@@ -1,25 +1,33 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { v4 as uuidv4 } from 'uuid';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import './HomePage.css';
+
+const ROOM_CODE_PATTERN = /^[A-Z]{6}$/;
 
 function HomePage() {
   const [roomId, setRoomId] = useState('');
+  const [joinError, setJoinError] = useState('');
   const navigate = useNavigate();
 
   const handleCreateRoom = () => {
-    const newRoomId = uuidv4();
-    navigate(`/room/${newRoomId}`);
+    navigate('/create-room');
   };
 
   const handleJoinRoom = (e) => {
     e.preventDefault();
-    if (roomId.trim() !== '') {
-      navigate(`/room/${roomId.trim()}`);
+    const roomCode = roomId.trim().toUpperCase();
+
+    if (!ROOM_CODE_PATTERN.test(roomCode)) {
+      setJoinError('Room Code wajib 6 huruf A-Z.');
+      return;
     }
+
+    setJoinError('');
+    navigate(`/lobby/${roomCode}`);
   };
 
   return (
@@ -50,18 +58,23 @@ function HomePage() {
           <form onSubmit={handleJoinRoom} className="space-y-4">
             <Input
               type="text"
-              placeholder="Enter Room ID"
+              placeholder="Enter Room Code"
               value={roomId}
-              onChange={(e) => setRoomId(e.target.value)}
-              className="w-full"
+              maxLength={6}
+              onChange={(e) => {
+                setRoomId(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 6));
+                setJoinError('');
+              }}
+              className="w-full home-room-code-input"
             />
+            {joinError ? <p className="home-form-error">{joinError}</p> : null}
             <Button 
               type="submit" 
               variant="outline" 
               className="w-full font-semibold" 
               size="lg"
             >
-              Join Room
+              Join
             </Button>
           </form>
         </CardContent>

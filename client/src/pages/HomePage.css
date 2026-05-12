@@ -1,0 +1,11 @@
+.home-room-code-input {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.home-form-error {
+  margin: -8px 0 0;
+  color: #dc2626;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}

@@ -17,7 +17,8 @@ function formatDuration(totalSeconds) {
 }
 
 function MeetingPage() {
-  const { roomId = 'Unknown' } = useParams();
+  const { roomCode, roomId } = useParams();
+  const resolvedRoomId = roomCode || roomId || 'Unknown';
   const navigate = useNavigate();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isMarkerPanelOpen, setIsMarkerPanelOpen] = useState(false);
@@ -29,7 +30,7 @@ function MeetingPage() {
     toggleMute,
     toggleCamera,
     leaveMeeting,
-  } = useWebRTC(roomId);
+  } = useWebRTC(resolvedRoomId);
   const localStream = participants.find((participant) => participant.isLocal)?.stream;
   const {
     isRecording,
@@ -38,7 +39,7 @@ function MeetingPage() {
     error: recorderError,
     startRecording,
     stopRecording,
-  } = useRecorder(localStream, roomId);
+  } = useRecorder(localStream, resolvedRoomId);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -82,7 +83,7 @@ function MeetingPage() {
   };
 
   const handleLeaveMeeting = async () => {
-    console.log(`Leaving room ${roomId}`);
+    console.log(`Leaving room ${resolvedRoomId}`);
     if (isRecording) {
       await stopRecording();
     }
@@ -93,7 +94,7 @@ function MeetingPage() {
   return (
     <main className="meeting-page">
       <TopBar
-        roomId={roomId}
+        roomId={resolvedRoomId}
         participantCount={participants.length}
         duration={duration}
       />
