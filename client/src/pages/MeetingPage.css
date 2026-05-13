@@ -75,9 +75,35 @@
 .meeting-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--meeting-grid-columns, 1), minmax(0, 1fr));
+  grid-auto-rows: minmax(220px, 1fr);
   gap: 18px;
-  align-content: start;
+  align-content: stretch;
+  justify-content: stretch;
+  min-height: 0;
+}
+
+.meeting-grid--single {
+  width: min(100%, 1240px);
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.meeting-grid--single .video-tile {
+  min-height: min(64vh, 720px);
+}
+
+.meeting-grid--duo {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.meeting-grid--duo .video-tile,
+.meeting-grid--quad .video-tile {
+  min-height: min(52vh, 520px);
+}
+
+.meeting-grid--gallery {
+  grid-auto-rows: minmax(220px, 1fr);
 }
 
 .meeting-error {
@@ -90,7 +116,7 @@
 }
 
 .video-tile {
-  min-height: 220px;
+  min-height: clamp(220px, 28vh, 360px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -109,6 +135,7 @@
 
 .video-tile__screen {
   flex: 1;
+  min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -358,21 +385,23 @@
   font-variant-numeric: tabular-nums;
 }
 
-@media (min-width: 700px) {
-  .meeting-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1080px) {
-  .meeting-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 720px) {
   .meeting-page {
     padding: 16px;
+  }
+
+  .meeting-grid,
+  .meeting-grid--duo,
+  .meeting-grid--quad,
+  .meeting-grid--gallery {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(220px, auto);
+  }
+
+  .meeting-grid--single .video-tile,
+  .meeting-grid--duo .video-tile,
+  .meeting-grid--quad .video-tile {
+    min-height: 240px;
   }
 
   .meeting-topbar {

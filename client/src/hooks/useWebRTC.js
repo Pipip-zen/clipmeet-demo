@@ -5,6 +5,14 @@ const SIGNALING_SERVER_URL = 'http://localhost:3001';
 const RTC_CONFIGURATION = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };
+const MEDIA_CONSTRAINTS = {
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+  video: true,
+};
 
 function buildPeerLabel(peerId, participantName) {
   return participantName || `Peer ${peerId.slice(0, 6)}`;
@@ -22,6 +30,14 @@ function normalizePeer(peer) {
     socketId: peer.socketId,
     participantName: peer.participantName || '',
   };
+}
+
+function readPrejoinPreferences() {
+  try {
+    return JSON.parse(localStorage.getItem('clipmeet.prejoin')) || {};
+  } catch {
+    return {};
+  }
 }
 
 function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
@@ -166,10 +182,18 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     const setupWebRTC = async () => {
       try {
         hasLeftRef.current = false;
+        const prejoinPreferences = readPrejoinPreferences();
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true,
+        const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
+
+        const shouldEnableMic = prejoinPreferences.isMicOn !== false;
+        const shouldEnableCamera = prejoinPreferences.isCamOn !== false;
+
+        stream.getAudioTracks().forEach((track) => {
+          track.enabled = shouldEnableMic;
+        });
+        stream.getVideoTracks().forEach((track) => {
+          track.enabled = shouldEnableCamera;
         });
 
         if (!isMounted) {
@@ -179,6 +203,8 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
 
         localStreamRef.current = stream;
         setLocalStream(stream);
+        setIsMuted(!shouldEnableMic);
+        setIsCameraOff(!shouldEnableCamera);
 
         const socket = io(SIGNALING_SERVER_URL, {
           transports: ['websocket'],
@@ -274,6 +300,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
 
     return () => {
       isMounted = false;
+      localStorage.removeItem('clipmeet.prejoin');
       cleanup();
     };
   }, [cleanup, createPeerConnection, normalizedRoomCode, participantName, removePeer, roomName, setPeerName]);

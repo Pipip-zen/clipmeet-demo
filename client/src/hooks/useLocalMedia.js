@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+const MEDIA_CONSTRAINTS = {
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+  video: true,
+};
+
 function useLocalMedia() {
   const [stream, setStream] = useState(null);
   const [isCamOn, setIsCamOn] = useState(true);
@@ -12,10 +21,7 @@ function useLocalMedia() {
 
     const setupMedia = async () => {
       try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
+        const mediaStream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
 
         if (!isMounted) {
           mediaStream.getTracks().forEach((track) => track.stop());

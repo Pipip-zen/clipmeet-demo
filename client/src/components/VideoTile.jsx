@@ -8,7 +8,16 @@ function VideoTile({ name, isMuted, isCameraOff, isLocal, stream }) {
       return;
     }
 
-    videoRef.current.srcObject = stream || null;
+    const videoElement = videoRef.current;
+    videoElement.srcObject = stream || null;
+
+    if (!stream) {
+      return;
+    }
+
+    videoElement.play().catch((playError) => {
+      console.error('Failed to start participant media playback:', playError);
+    });
   }, [stream]);
 
   return (
@@ -20,7 +29,7 @@ function VideoTile({ name, isMuted, isCameraOff, isLocal, stream }) {
             className="video-tile__video"
             autoPlay
             playsInline
-            muted={isLocal}
+            muted
           />
         ) : (
           <div className="video-tile__avatar" aria-hidden="true">

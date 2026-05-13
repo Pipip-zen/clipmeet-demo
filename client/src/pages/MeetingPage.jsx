@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ControlBar from '@/components/ControlBar';
 import MarkerPanel from '@/components/MarkerPanel';
+import ParticipantAudio from '@/components/ParticipantAudio';
 import TopBar from '@/components/TopBar';
 import VideoTile from '@/components/VideoTile';
+import { formatDuration, getMeetingLayout } from '@/lib/meetingLayout';
 import useRecorder from '@/hooks/useRecorder';
 import useWebRTC from '@/hooks/useWebRTC';
 import './MeetingPage.css';
@@ -23,14 +25,6 @@ function readStoredRoomName(roomCode) {
   } catch {
     return '';
   }
-}
-
-function formatDuration(totalSeconds) {
-  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
-  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-  const seconds = String(totalSeconds % 60).padStart(2, '0');
-
-  return `${hours}:${minutes}:${seconds}`;
 }
 
 function MeetingPage() {
@@ -57,7 +51,6 @@ function MeetingPage() {
     leaveMeeting,
   } = useWebRTC(resolvedRoomId, participantName, localRoomName);
   const roomName = syncedRoomName || localRoomName;
-  const localStream = participants.find((participant) => participant.isLocal)?.stream;
   const {
     isRecording,
     meetingId,
@@ -65,7 +58,8 @@ function MeetingPage() {
     error: recorderError,
     startRecording,
     stopRecording,
-  } = useRecorder(localStream, resolvedRoomId, roomName);
+  } = useRecorder(participants, resolvedRoomId, roomName);
+  const layout = useMemo(() => getMeetingLayout(participants.length), [participants.length]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -125,7 +119,11 @@ function MeetingPage() {
         duration={duration}
       />
 
-      <section className="meeting-grid" aria-label="Meeting participants">
+      <section
+        className={`meeting-grid meeting-grid--${layout.variant}`}
+        aria-label="Meeting participants"
+        style={{ '--meeting-grid-columns': layout.columns, '--meeting-grid-rows': layout.rows }}
+      >
         {error ? <p className="meeting-error">{error}</p> : null}
         {recorderError ? <p className="meeting-error">{recorderError}</p> : null}
         {participants.map((participant) => (
@@ -143,6 +141,16 @@ function MeetingPage() {
           />
         ))}
       </section>
+
+      {participants.map((participant) => (
+        participant.stream ? (
+          <ParticipantAudio
+            key={`audio-${participant.id}`}
+            stream={participant.stream}
+            label={participant.name}
+          />
+        ) : null
+      ))}
 
       {isMarkerPanelOpen && isRecording ? (
         <MarkerPanel
