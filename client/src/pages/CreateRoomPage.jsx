@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import './CreateRoomPage.css';
 
-const SIGNALING_SERVER_URL = 'http://localhost:3001';
+const SIGNALING_SERVER_URL = import.meta.env.VITE_SIGNALING_SERVER_URL || 'http://localhost:3001';
 
 const generateRoomCode = () =>
   Array.from({ length: 6 }, () =>

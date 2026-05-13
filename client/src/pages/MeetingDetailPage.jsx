@@ -4,7 +4,7 @@ import ClipCreator from '@/components/ClipCreator';
 import { API_BASE_URL, authFetch } from '@/lib/api';
 import './MeetingDetailPage.css';
 
-const SERVER_BASE_URL = 'http://localhost:3001';
+const SERVER_BASE_URL = import.meta.env.VITE_SIGNALING_SERVER_URL || 'http://localhost:3001';
 
 function toServerUrl(filePath) {
   if (!filePath) {

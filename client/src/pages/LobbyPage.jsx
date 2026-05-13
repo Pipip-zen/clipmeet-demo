@@ -5,7 +5,7 @@ import { useAuth } from '@/context/useAuth';
 import useLocalMedia from '@/hooks/useLocalMedia';
 import './LobbyPage.css';
 
-const SIGNALING_SERVER_URL = 'http://localhost:3001';
+const SIGNALING_SERVER_URL = import.meta.env.VITE_SIGNALING_SERVER_URL || 'http://localhost:3001';
 
 function readRoomName(roomCode) {
   try {

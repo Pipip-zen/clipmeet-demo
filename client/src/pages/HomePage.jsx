@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { useAuth } from '@/context/useAuth';
+import heroImg from '@/assets/hero.png';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import './HomePage.css';
 
-const SIGNALING_SERVER_URL = 'http://localhost:3001';
+const SIGNALING_SERVER_URL = import.meta.env.VITE_SIGNALING_SERVER_URL || 'http://localhost:3001';
 const ROOM_CODE_PATTERN = /^[A-Z]{6}$/;
 
 function HomePage() {
@@ -64,23 +65,38 @@ function HomePage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-6">
       <div className="home-auth-bar">
         <span>
           Halo, <strong>{user?.username}</strong>
         </span>
-        <Button type="button" variant="outline" onClick={handleLogout}>
+        <Button type="button" variant="outline" size="sm" onClick={handleLogout}>
           Logout
         </Button>
       </div>
 
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <CardTitle className="text-4xl font-bold tracking-tight text-primary">ClipMeet</CardTitle>
-          <CardDescription className="text-lg mt-2">
-            Real-time meeting with easy video clipping
-          </CardDescription>
-        </CardHeader>
+      <div className="grid lg:grid-cols-2 gap-12 max-w-6xl w-full items-center">
+        <div className="hidden lg:block relative group">
+          <div className="absolute -inset-1 bg-gradient-to-r from-primary to-blue-600 rounded-[2rem] blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
+          <img 
+            src={heroImg} 
+            alt="Hero Illustration" 
+            className="relative w-full h-auto rounded-[2rem] shadow-2xl object-cover transform hover:scale-[1.02] transition-transform duration-500" 
+          />
+        </div>
+
+        <Card className="w-full max-w-md mx-auto border-none shadow-2xl bg-background/95 backdrop-blur-sm">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-6 p-3 rounded-2xl bg-primary/10 w-fit">
+              <img src="/icon.png" alt="ClipMeet Logo" className="w-16 h-16 object-contain" />
+            </div>
+            <CardTitle className="text-5xl font-extrabold tracking-tight text-primary bg-gradient-to-br from-primary to-blue-700 bg-clip-text text-transparent">
+              ClipMeet
+            </CardTitle>
+            <CardDescription className="text-lg mt-3 font-medium">
+              Real-time meeting with easy video clipping
+            </CardDescription>
+          </CardHeader>
         
         <CardContent className="space-y-6">
           <Button 
@@ -131,7 +147,8 @@ function HomePage() {
             Go to Dashboard
           </Button>
         </CardFooter>
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 }

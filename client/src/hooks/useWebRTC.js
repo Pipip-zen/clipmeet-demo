@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
-const SIGNALING_SERVER_URL = 'http://localhost:3001';
+const SIGNALING_SERVER_URL = import.meta.env.VITE_SIGNALING_SERVER_URL || 'http://localhost:3001';
 const RTC_CONFIGURATION = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };

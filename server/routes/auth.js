@@ -5,7 +5,7 @@ const db = require('../db');
 const authenticateToken = require('../middleware/auth');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'clipmeet_secret_key_ganti_ini';
+const JWT_SECRET = process.env.JWT_SECRET || 'clipmeet_dev_secret_key';
 
 function normalizeUsername(username) {
   return typeof username === 'string' ? username.trim().toLowerCase() : '';

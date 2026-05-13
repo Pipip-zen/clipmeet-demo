@@ -13,7 +13,7 @@ const authRouter = require('./routes/auth');
 
 // Setup CORS
 app.use(cors({
-  origin: 'http://localhost:5173', // Origin client
+  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173', // Origin client
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']
 }));
 
@@ -35,7 +35,7 @@ app.get('/health', (req, res) => {
 // Setup Socket.IO dengan CORS
 const io = new Server(server, {
   cors: {
-    origin: 'http://localhost:5173',
+    origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
     methods: ['GET', 'POST']
   }
 });

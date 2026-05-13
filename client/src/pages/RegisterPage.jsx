@@ -32,6 +32,7 @@ function RegisterPage() {
     <main className="auth-page">
       <section className="auth-card">
         <header className="auth-header">
+          <img src="/icon.png" alt="ClipMeet Logo" className="auth-logo-img" />
           <h1 className="auth-logo">ClipMeet</h1>
           <p className="auth-subtitle">Buat akun untuk menyimpan rekaman meeting.</p>
         </header>
