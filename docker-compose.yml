@@ -1,4 +1,4 @@
-  services:
+services:
   clipmeet-api:
     build:
       context: ./server
@@ -7,7 +7,7 @@
     environment:
       PORT: 3001
       CLIENT_ORIGIN: https://clipmeet.web.id
-      JWT_SECRET: ganti_dengan_secret_random_panjang
+      JWT_SECRET: ZaMotO3TOIpmjeiYxO0noUUyqYnFqJOmQhaG5wg+l4U=
     volumes:
       - ./server/uploads:/app/uploads
       - ./server/clips:/app/clips
