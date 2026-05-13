@@ -53,23 +53,33 @@ function useLocalMedia() {
 
   const toggleCam = useCallback(() => {
     const videoTracks = streamRef.current?.getVideoTracks() || [];
-    const nextValue = !isCamOn;
+    if (videoTracks.length === 0) {
+      return;
+    }
 
-    videoTracks.forEach((track) => {
-      track.enabled = nextValue;
+    setIsCamOn((currentValue) => {
+      const nextValue = !currentValue;
+      videoTracks.forEach((track) => {
+        track.enabled = nextValue;
+      });
+      return nextValue;
     });
-    setIsCamOn(nextValue);
-  }, [isCamOn]);
+  }, []);
 
   const toggleMic = useCallback(() => {
     const audioTracks = streamRef.current?.getAudioTracks() || [];
-    const nextValue = !isMicOn;
+    if (audioTracks.length === 0) {
+      return;
+    }
 
-    audioTracks.forEach((track) => {
-      track.enabled = nextValue;
+    setIsMicOn((currentValue) => {
+      const nextValue = !currentValue;
+      audioTracks.forEach((track) => {
+        track.enabled = nextValue;
+      });
+      return nextValue;
     });
-    setIsMicOn(nextValue);
-  }, [isMicOn]);
+  }, []);
 
   return {
     stream,

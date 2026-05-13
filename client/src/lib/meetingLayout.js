@@ -26,6 +26,14 @@ export function getMeetingLayout(participantCount) {
     };
   }
 
+  if (count === 3) {
+    return {
+      columns: 2,
+      rows: 2,
+      variant: 'trio',
+    };
+  }
+
   if (count <= 4) {
     return {
       columns: 2,

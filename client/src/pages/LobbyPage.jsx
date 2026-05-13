@@ -61,12 +61,20 @@ function LobbyPage() {
   }, [normalizedRoomCode]);
 
   useEffect(() => {
-    if (!videoRef.current) {
+    const videoElement = videoRef.current;
+    if (!videoElement) {
       return;
     }
 
-    videoRef.current.srcObject = stream || null;
-  }, [isCamOn, stream]);
+    if (!stream) {
+      videoElement.srcObject = null;
+      return;
+    }
+
+    if (videoElement.srcObject !== stream) {
+      videoElement.srcObject = stream;
+    }
+  }, [stream]);
 
   const stopLobbyTracks = () => {
     stream?.getTracks().forEach((track) => track.stop());
@@ -109,7 +117,7 @@ function LobbyPage() {
         </header>
 
         <div className="lobby-preview">
-          {stream && isCamOn ? (
+          {stream ? (
             <video
               ref={videoRef}
               className="lobby-video"
@@ -117,9 +125,10 @@ function LobbyPage() {
               muted
               playsInline
             />
-          ) : (
+          ) : null}
+          {(!stream || !isCamOn) ? (
             <div className="lobby-camera-off">Kamera Mati</div>
-          )}
+          ) : null}
         </div>
 
         {error ? <p className="lobby-error">{error}</p> : null}

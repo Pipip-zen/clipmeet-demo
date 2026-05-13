@@ -45,6 +45,7 @@ const createdRooms = new Set();
 // socketToRoom: Map<socketId, roomCode>
 const socketToRoom = new Map();
 const socketToParticipantName = new Map();
+const socketToMediaState = new Map();
 
 function normalizeRoomCode(roomCode) {
   return typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
@@ -52,6 +53,15 @@ function normalizeRoomCode(roomCode) {
 
 function roomExists(roomCode) {
   return createdRooms.has(roomCode) || rooms.has(roomCode);
+}
+
+function getRoomHostSocketId(roomCode) {
+  const usersInRoom = rooms.get(roomCode);
+  if (!usersInRoom || usersInRoom.size === 0) {
+    return null;
+  }
+
+  return usersInRoom.keys().next().value;
 }
 
 io.on('connection', (socket) => {
@@ -105,6 +115,12 @@ io.on('connection', (socket) => {
     const participantName =
       typeof payload === 'string' ? 'Guest' : payload.participantName || 'Guest';
     const roomName = typeof payload === 'string' ? roomCode : payload.roomName || roomCode;
+    const mediaState = typeof payload === 'string'
+      ? { isMuted: false, isCameraOff: false }
+      : {
+          isMuted: Boolean(payload.isMuted),
+          isCameraOff: Boolean(payload.isCameraOff),
+        };
 
     if (!roomExists(roomCode)) {
       socket.emit('room-join-error', {
@@ -129,12 +145,14 @@ io.on('connection', (socket) => {
     const existingPeers = Array.from(usersInRoom.entries()).map(([socketId, name]) => ({
       socketId,
       participantName: name,
+      mediaState: socketToMediaState.get(socketId) || { isMuted: false, isCameraOff: false },
     }));
 
     // Tambahkan user baru ke dalam state
     usersInRoom.set(socket.id, participantName);
     socketToRoom.set(socket.id, roomCode);
     socketToParticipantName.set(socket.id, participantName);
+    socketToMediaState.set(socket.id, mediaState);
 
     console.log(`User ${socket.id} joined room ${roomCode}`);
 
@@ -150,19 +168,21 @@ io.on('connection', (socket) => {
   });
 
   // Event meneruskan WebRTC Offer
-  socket.on('offer', ({ target, caller, participantName, offer }) => {
+  socket.on('offer', ({ target, caller, participantName, mediaState, offer }) => {
     io.to(target).emit('offer', {
       caller: caller || socket.id,
       participantName: participantName || socketToParticipantName.get(socket.id) || 'Guest',
+      mediaState: mediaState || socketToMediaState.get(socket.id) || { isMuted: false, isCameraOff: false },
       offer
     });
   });
 
   // Event meneruskan WebRTC Answer
-  socket.on('answer', ({ target, caller, participantName, answer }) => {
+  socket.on('answer', ({ target, caller, participantName, mediaState, answer }) => {
     io.to(target).emit('answer', {
       caller: caller || socket.id,
       participantName: participantName || socketToParticipantName.get(socket.id) || 'Guest',
+      mediaState: mediaState || socketToMediaState.get(socket.id) || { isMuted: false, isCameraOff: false },
       answer
     });
   });
@@ -172,6 +192,85 @@ io.on('connection', (socket) => {
     io.to(target).emit('ice-candidate', {
       caller: caller || socket.id,
       candidate
+    });
+  });
+
+  socket.on('media-state-changed', ({ isMuted, isCameraOff }) => {
+    const roomCode = socketToRoom.get(socket.id);
+    if (!roomCode) {
+      return;
+    }
+
+    const mediaState = {
+      isMuted: Boolean(isMuted),
+      isCameraOff: Boolean(isCameraOff),
+    };
+    socketToMediaState.set(socket.id, mediaState);
+
+    socket.broadcast.to(roomCode).emit('media-state-changed', {
+      socketId: socket.id,
+      ...mediaState,
+    });
+  });
+
+  socket.on('request-screenshare', ({ roomCode, requesterName }) => {
+    const normalizedRoomCode = normalizeRoomCode(roomCode);
+    const hostSocketId = getRoomHostSocketId(normalizedRoomCode);
+
+    if (!hostSocketId) {
+      socket.emit('screenshare-rejected', {
+        message: 'Host tidak tersedia.',
+      });
+      return;
+    }
+
+    io.to(hostSocketId).emit('screenshare-request', {
+      roomCode: normalizedRoomCode,
+      requesterSocketId: socket.id,
+      requesterName: requesterName || socketToParticipantName.get(socket.id) || 'Guest',
+    });
+  });
+
+  socket.on('screenshare-approved', ({ roomCode, requesterSocketId }) => {
+    const normalizedRoomCode = normalizeRoomCode(roomCode);
+    const hostSocketId = getRoomHostSocketId(normalizedRoomCode);
+
+    if (hostSocketId !== socket.id) {
+      return;
+    }
+
+    io.to(requesterSocketId).emit('screenshare-approved', {
+      roomCode: normalizedRoomCode,
+    });
+  });
+
+  socket.on('screenshare-rejected', ({ roomCode, requesterSocketId }) => {
+    const normalizedRoomCode = normalizeRoomCode(roomCode);
+    const hostSocketId = getRoomHostSocketId(normalizedRoomCode);
+
+    if (hostSocketId !== socket.id) {
+      return;
+    }
+
+    io.to(requesterSocketId).emit('screenshare-rejected', {
+      message: 'Permintaan ditolak oleh host.',
+    });
+  });
+
+  socket.on('screenshare-started', ({ roomCode, sharerName }) => {
+    const normalizedRoomCode = normalizeRoomCode(roomCode);
+
+    io.to(normalizedRoomCode).emit('screenshare-started', {
+      sharerSocketId: socket.id,
+      sharerName: sharerName || socketToParticipantName.get(socket.id) || 'Guest',
+    });
+  });
+
+  socket.on('screenshare-stopped', ({ roomCode }) => {
+    const normalizedRoomCode = normalizeRoomCode(roomCode);
+
+    io.to(normalizedRoomCode).emit('screenshare-stopped', {
+      sharerSocketId: socket.id,
     });
   });
 
@@ -190,6 +289,7 @@ io.on('connection', (socket) => {
       
       socketToRoom.delete(socket.id);
       socketToParticipantName.delete(socket.id);
+      socketToMediaState.delete(socket.id);
       socket.leave(roomId);
       
       console.log(`User ${socket.id} left room ${roomId}`);

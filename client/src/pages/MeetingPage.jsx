@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import ControlBar from '@/components/ControlBar';
 import LocalAudioMonitor from '@/components/LocalAudioMonitor';
 import MarkerPanel from '@/components/MarkerPanel';
+import ScreenShareStage from '@/components/ScreenShareStage';
 import TopBar from '@/components/TopBar';
 import VideoTile from '@/components/VideoTile';
 import { formatDuration, getMeetingLayout } from '@/lib/meetingLayout';
@@ -45,9 +46,15 @@ function MeetingPage() {
     roomName: syncedRoomName,
     isMuted,
     isCameraOff,
+    screenShare,
+    pendingScreenShareRequest,
     error,
     toggleMute,
     toggleCamera,
+    requestScreenShare,
+    approveScreenShareRequest,
+    rejectScreenShareRequest,
+    stopScreenShare,
     leaveMeeting,
   } = useWebRTC(resolvedRoomId, participantName, localRoomName);
   const roomName = syncedRoomName || localRoomName;
@@ -61,6 +68,13 @@ function MeetingPage() {
     stopRecording,
   } = useRecorder(participants, resolvedRoomId, roomName);
   const layout = useMemo(() => getMeetingLayout(participants.length), [participants.length]);
+  const sharedParticipant = useMemo(
+    () => participants.find((participant) => participant.id === screenShare.sharerSocketId),
+    [participants, screenShare.sharerSocketId]
+  );
+  const screenShareStream = screenShare.isLocalSharing
+    ? screenShare.stream
+    : sharedParticipant?.stream || null;
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -103,6 +117,15 @@ function MeetingPage() {
     console.log('Marker panel toggled');
   };
 
+  const handleToggleScreenShare = async () => {
+    if (screenShare.isLocalSharing) {
+      await stopScreenShare();
+      return;
+    }
+
+    requestScreenShare();
+  };
+
   const handleLeaveMeeting = async () => {
     console.log(`Leaving room ${resolvedRoomId}`);
     if (isRecording) {
@@ -113,36 +136,65 @@ function MeetingPage() {
   };
 
   return (
-    <main className="meeting-page">
+    <main className={screenShare.isActive ? 'meeting-page meeting-page--screen-share' : 'meeting-page'}>
       <TopBar
         roomName={roomName}
         participantCount={participants.length}
         duration={duration}
       />
 
-      <section
-        className={`meeting-grid meeting-grid--${layout.variant}`}
-        aria-label="Meeting participants"
-        style={{ '--meeting-grid-columns': layout.columns, '--meeting-grid-rows': layout.rows }}
-      >
-        {error ? <p className="meeting-error">{error}</p> : null}
-        {recorderError ? <p className="meeting-error">{recorderError}</p> : null}
-        {participants.map((participant) => (
-          <VideoTile
-            key={participant.id}
-            name={
-              participant.isLocal
-                ? `You (${participantName})`
-                : peerNames[participant.id] || participant.name
-            }
-            isMuted={participant.isMuted}
-            isCameraOff={participant.isCameraOff}
-            isLocal={participant.isLocal}
-            muted={participant.isLocal}
-            stream={participant.stream}
+      {error ? <p className="meeting-error">{error}</p> : null}
+      {recorderError ? <p className="meeting-error">{recorderError}</p> : null}
+      {screenShare.requestStatus ? <p className="meeting-info">{screenShare.requestStatus}</p> : null}
+      {screenShare.requestError ? <p className="meeting-error">{screenShare.requestError}</p> : null}
+
+      {screenShare.isActive ? (
+        <section className="screen-share-layout" aria-label="Meeting screen share layout">
+          <div className="screen-share-strip" aria-label="Participants">
+            {participants.map((participant) => (
+              <VideoTile
+                key={participant.id}
+                name={
+                  participant.isLocal
+                    ? `You (${participantName})`
+                    : peerNames[participant.id] || participant.name
+                }
+                isMuted={participant.isMuted}
+                isCameraOff={participant.isCameraOff}
+                isLocal={participant.isLocal}
+                muted={participant.isLocal}
+                stream={participant.stream}
+              />
+            ))}
+          </div>
+          <ScreenShareStage
+            label={`${screenShare.sharerName} sedang berbagi layar`}
+            stream={screenShareStream}
           />
-        ))}
-      </section>
+        </section>
+      ) : (
+        <section
+          className={`meeting-grid meeting-grid--${layout.variant}`}
+          aria-label="Meeting participants"
+          style={{ '--meeting-grid-columns': layout.columns, '--meeting-grid-rows': layout.rows }}
+        >
+          {participants.map((participant) => (
+            <VideoTile
+              key={participant.id}
+              name={
+                participant.isLocal
+                  ? `You (${participantName})`
+                  : peerNames[participant.id] || participant.name
+              }
+              isMuted={participant.isMuted}
+              isCameraOff={participant.isCameraOff}
+              isLocal={participant.isLocal}
+              muted={participant.isLocal}
+              stream={participant.stream}
+            />
+          ))}
+        </section>
+      )}
 
       <LocalAudioMonitor stream={localStream} />
 
@@ -161,9 +213,37 @@ function MeetingPage() {
         onToggleMute={handleToggleMute}
         onToggleCamera={handleToggleCamera}
         onToggleRecording={handleToggleRecording}
+        isScreenSharing={screenShare.isLocalSharing}
+        isScreenSharePending={Boolean(screenShare.requestStatus)}
+        onToggleScreenShare={handleToggleScreenShare}
         onAddMarker={handleAddMarker}
         onLeaveMeeting={handleLeaveMeeting}
       />
+
+      {pendingScreenShareRequest ? (
+        <div className="screenshare-modal" role="dialog" aria-modal="true">
+          <div className="screenshare-modal__panel">
+            <p className="screenshare-modal__title">
+              {pendingScreenShareRequest.requesterName} ingin berbagi layar
+            </p>
+            <div className="screenshare-modal__actions">
+              <button
+                type="button"
+                onClick={() => rejectScreenShareRequest(pendingScreenShareRequest)}
+              >
+                Tolak
+              </button>
+              <button
+                type="button"
+                className="screenshare-modal__primary"
+                onClick={() => approveScreenShareRequest(pendingScreenShareRequest)}
+              >
+                Izinkan
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

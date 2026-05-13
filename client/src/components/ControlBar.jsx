@@ -2,9 +2,12 @@ function ControlBar({
   isMuted,
   isCameraOff,
   isRecording,
+  isScreenSharing,
+  isScreenSharePending,
   onToggleMute,
   onToggleCamera,
   onToggleRecording,
+  onToggleScreenShare,
   onAddMarker,
   onLeaveMeeting,
 }) {
@@ -33,6 +36,15 @@ function ControlBar({
       >
         <span className="control-button__record-dot" />
         {isRecording ? 'Stop Record' : 'Start Record'}
+      </button>
+
+      <button
+        type="button"
+        className={`control-button${isScreenSharing ? ' control-button--active' : ''}`}
+        onClick={onToggleScreenShare}
+        disabled={isScreenSharePending}
+      >
+        {isScreenSharing ? 'Stop Share' : isScreenSharePending ? 'Waiting Host' : 'Share Screen'}
       </button>
 
       <button
