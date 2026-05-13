@@ -63,6 +63,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     sharerSocketId: '',
     sharerName: '',
     stream: null,
+    streamId: '',
     isLocalSharing: false,
     requestStatus: '',
     requestError: '',
@@ -70,17 +71,50 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
   const [pendingScreenShareRequest, setPendingScreenShareRequest] = useState(null);
 
   const localStreamRef = useRef(null);
-  const cameraVideoTrackRef = useRef(null);
   const screenStreamRef = useRef(null);
   const socketRef = useRef(null);
   const localSocketIdRef = useRef('');
   const peerConnectionsRef = useRef({});
-  const remoteStreamsRef = useRef({});
+  const peerCameraStreamsRef = useRef({});
+  const peerScreenStreamsRef = useRef({});
+  const peerIncomingStreamsRef = useRef({});
   const pendingIceCandidatesRef = useRef({});
   const peerNamesRef = useRef({});
   const peerMediaStateRef = useRef({});
+  const peerScreenMetaRef = useRef({});
   const localMediaStateRef = useRef({ isMuted: false, isCameraOff: false });
   const hasLeftRef = useRef(false);
+
+  const upsertRemoteParticipant = useCallback((peerId, overrides = {}) => {
+    setRemoteParticipants((current) => {
+      const name = overrides.name || peerNamesRef.current[peerId] || buildPeerLabel(peerId, '');
+      const mediaState = peerMediaStateRef.current[peerId] || {
+        isMuted: false,
+        isCameraOff: false,
+      };
+      const nextParticipant = {
+        id: peerId,
+        name,
+        stream: peerCameraStreamsRef.current[peerId] || null,
+        isLocal: false,
+        isMuted: Boolean(mediaState.isMuted),
+        isCameraOff: Boolean(mediaState.isCameraOff),
+        ...overrides,
+      };
+
+      const existingIndex = current.findIndex((participant) => participant.id === peerId);
+      if (existingIndex === -1) {
+        return [...current, nextParticipant];
+      }
+
+      const nextParticipants = [...current];
+      nextParticipants[existingIndex] = {
+        ...nextParticipants[existingIndex],
+        ...nextParticipant,
+      };
+      return nextParticipants;
+    });
+  }, []);
 
   const setPeerName = useCallback((peerId, name) => {
     if (!peerId || !name) {
@@ -92,86 +126,85 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       [peerId]: name,
     };
     setPeerNames(peerNamesRef.current);
-  }, []);
-
-  const resetRemotePeers = useCallback(() => {
-    Object.values(peerConnectionsRef.current).forEach((connection) => {
-      connection.onicecandidate = null;
-      connection.ontrack = null;
-      connection.onconnectionstatechange = null;
-      connection.close();
+    upsertRemoteParticipant(peerId, {
+      name: buildPeerLabel(peerId, name),
     });
-
-    peerConnectionsRef.current = {};
-    remoteStreamsRef.current = {};
-    pendingIceCandidatesRef.current = {};
-    peerNamesRef.current = {};
-    peerMediaStateRef.current = {};
-    setPeerNames({});
-    setRemoteParticipants([]);
-  }, []);
-
-  const removePeer = useCallback((peerId) => {
-    const connection = peerConnectionsRef.current[peerId];
-    if (connection) {
-      connection.onicecandidate = null;
-      connection.ontrack = null;
-      connection.onconnectionstatechange = null;
-      connection.close();
-      delete peerConnectionsRef.current[peerId];
-    }
-
-    delete remoteStreamsRef.current[peerId];
-    delete pendingIceCandidatesRef.current[peerId];
-    delete peerNamesRef.current[peerId];
-    delete peerMediaStateRef.current[peerId];
-    setPeerNames({ ...peerNamesRef.current });
-    setRemoteParticipants((current) => current.filter((participant) => participant.id !== peerId));
-  }, []);
+  }, [upsertRemoteParticipant]);
 
   const setPeerMediaState = useCallback((peerId, mediaState = {}) => {
     if (!peerId) {
       return;
     }
 
-    const nextMediaState = {
-      isMuted: Boolean(mediaState.isMuted),
-      isCameraOff: Boolean(mediaState.isCameraOff),
-    };
     peerMediaStateRef.current = {
       ...peerMediaStateRef.current,
-      [peerId]: nextMediaState,
+      [peerId]: {
+        isMuted: Boolean(mediaState.isMuted),
+        isCameraOff: Boolean(mediaState.isCameraOff),
+      },
     };
 
-    setRemoteParticipants((current) =>
-      current.map((participant) =>
-        participant.id === peerId
-          ? {
-              ...participant,
-              ...nextMediaState,
-            }
-          : participant
-      )
-    );
+    upsertRemoteParticipant(peerId);
+  }, [upsertRemoteParticipant]);
+
+  const applyScreenShareState = useCallback((nextState) => {
+    setScreenShare((current) => ({
+      ...current,
+      ...nextState,
+    }));
   }, []);
 
-  const emitMediaState = useCallback((mediaState) => {
-    if (!socketRef.current) {
+  const syncActiveScreenShareStream = useCallback((peerId) => {
+    if (screenShare.sharerSocketId !== peerId) {
       return;
     }
 
-    socketRef.current.emit('media-state-changed', mediaState);
-  }, []);
-
-  const replaceOutgoingVideoTrack = useCallback(async (nextTrack) => {
-    const replacements = Object.values(peerConnectionsRef.current).map(async (connection) => {
-      const sender = connection.getSenders().find((item) => item.track?.kind === 'video');
-      if (sender) {
-        await sender.replaceTrack(nextTrack);
-      }
+    applyScreenShareState({
+      stream: peerScreenStreamsRef.current[peerId] || null,
     });
+  }, [applyScreenShareState, screenShare.sharerSocketId]);
 
-    await Promise.all(replacements);
+  const classifyIncomingStream = useCallback((peerId, stream) => {
+    if (!stream) {
+      return 'camera';
+    }
+
+    peerIncomingStreamsRef.current[peerId] = {
+      ...(peerIncomingStreamsRef.current[peerId] || {}),
+      [stream.id]: stream,
+    };
+
+    const activeScreenMeta = peerScreenMetaRef.current[peerId];
+    if (activeScreenMeta?.streamId && stream.id === activeScreenMeta.streamId) {
+      peerScreenStreamsRef.current[peerId] = stream;
+      syncActiveScreenShareStream(peerId);
+      return 'screen';
+    }
+
+    peerCameraStreamsRef.current[peerId] = stream;
+    upsertRemoteParticipant(peerId, { stream });
+    return 'camera';
+  }, [syncActiveScreenShareStream, upsertRemoteParticipant]);
+
+  const applyIncomingScreenMeta = useCallback((peerId, meta = {}) => {
+    peerScreenMetaRef.current[peerId] = {
+      isActive: Boolean(meta.isActive),
+      streamId: meta.streamId || '',
+      sharerName: meta.sharerName || peerNamesRef.current[peerId] || '',
+    };
+
+    const incomingStream = meta.streamId
+      ? peerIncomingStreamsRef.current[peerId]?.[meta.streamId]
+      : null;
+
+    if (incomingStream) {
+      peerScreenStreamsRef.current[peerId] = incomingStream;
+      syncActiveScreenShareStream(peerId);
+    }
+  }, [syncActiveScreenShareStream]);
+
+  const emitMediaState = useCallback((mediaState) => {
+    socketRef.current?.emit('media-state-changed', mediaState);
   }, []);
 
   const flushPendingIceCandidates = useCallback(async (peerId, connection) => {
@@ -191,6 +224,23 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     }
   }, []);
 
+  const attachLocalTracksToConnection = useCallback((connection) => {
+    localStreamRef.current?.getTracks().forEach((track) => {
+      const alreadyAdded = connection.getSenders().some((sender) => sender.track?.id === track.id);
+      if (!alreadyAdded) {
+        connection.addTrack(track, localStreamRef.current);
+      }
+    });
+
+    const screenTrack = screenStreamRef.current?.getVideoTracks()[0];
+    if (screenTrack) {
+      const alreadyAdded = connection.getSenders().some((sender) => sender.track?.id === screenTrack.id);
+      if (!alreadyAdded) {
+        connection.addTrack(screenTrack, screenStreamRef.current);
+      }
+    }
+  }, []);
+
   const createPeerConnection = useCallback((peerId, peerName = '') => {
     const existingConnection = peerConnectionsRef.current[peerId];
     if (existingConnection) {
@@ -198,15 +248,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     }
 
     const connection = new RTCPeerConnection(RTC_CONFIGURATION);
-
-    localStreamRef.current?.getTracks().forEach((track) => {
-      const activeScreenTrack = screenStreamRef.current?.getVideoTracks()[0];
-      const outboundTrack = track.kind === 'video' && activeScreenTrack
-        ? activeScreenTrack
-        : track;
-
-      connection.addTrack(outboundTrack, localStreamRef.current);
-    });
+    attachLocalTracksToConnection(connection);
 
     connection.onicecandidate = (event) => {
       if (!event.candidate || !socketRef.current) {
@@ -220,52 +262,70 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     };
 
     connection.ontrack = (event) => {
-      const inboundTrack = event.track;
-      const stream = remoteStreamsRef.current[peerId] || new MediaStream();
-
-      if (inboundTrack && !stream.getTracks().some((track) => track.id === inboundTrack.id)) {
-        stream.addTrack(inboundTrack);
+      const [incomingStream] = event.streams;
+      if (!incomingStream) {
+        return;
       }
 
-      remoteStreamsRef.current[peerId] = stream;
+      const streamType = classifyIncomingStream(peerId, incomingStream);
 
-      setRemoteParticipants((current) => {
-        const currentMediaState = peerMediaStateRef.current[peerId] || {};
-        const nextParticipant = {
-          id: peerId,
+      if (streamType === 'camera') {
+        upsertRemoteParticipant(peerId, {
           name: buildPeerLabel(peerId, peerNamesRef.current[peerId] || peerName),
-          stream,
-          isLocal: false,
-          isMuted: Boolean(currentMediaState.isMuted),
-          isCameraOff: Boolean(currentMediaState.isCameraOff),
-        };
-
-        const existingIndex = current.findIndex((participant) => participant.id === peerId);
-        if (existingIndex === -1) {
-          return [...current, nextParticipant];
-        }
-
-        const nextParticipants = [...current];
-        nextParticipants[existingIndex] = {
-          ...nextParticipants[existingIndex],
-          ...nextParticipant,
-        };
-        return nextParticipants;
-      });
+          stream: incomingStream,
+        });
+      } else {
+        syncActiveScreenShareStream(peerId);
+      }
     };
 
     connection.onconnectionstatechange = () => {
       if (['failed', 'closed'].includes(connection.connectionState)) {
-        removePeer(peerId);
+        const existingScreenShare = peerScreenMetaRef.current[peerId];
+        if (existingScreenShare?.isActive) {
+          applyScreenShareState({
+            isActive: false,
+            sharerSocketId: '',
+            sharerName: '',
+            stream: null,
+            streamId: '',
+            isLocalSharing: false,
+          });
+        }
+
+        const existing = peerConnectionsRef.current[peerId];
+        if (existing) {
+          existing.onicecandidate = null;
+          existing.ontrack = null;
+          existing.onconnectionstatechange = null;
+          existing.close();
+          delete peerConnectionsRef.current[peerId];
+        }
+
+        delete peerCameraStreamsRef.current[peerId];
+        delete peerScreenStreamsRef.current[peerId];
+        delete peerIncomingStreamsRef.current[peerId];
+        delete pendingIceCandidatesRef.current[peerId];
+        delete peerNamesRef.current[peerId];
+        delete peerMediaStateRef.current[peerId];
+        delete peerScreenMetaRef.current[peerId];
+        setPeerNames({ ...peerNamesRef.current });
+        setRemoteParticipants((current) => current.filter((participant) => participant.id !== peerId));
       }
     };
 
     peerConnectionsRef.current[peerId] = connection;
     return connection;
-  }, [removePeer]);
+  }, [applyScreenShareState, attachLocalTracksToConnection, classifyIncomingStream, syncActiveScreenShareStream, upsertRemoteParticipant]);
 
-  const buildAndSendOffer = useCallback(async (peerId, peerName = '') => {
+  const sendOfferToPeer = useCallback(async (peerId, peerName = '') => {
     const connection = createPeerConnection(peerId, peerName);
+    attachLocalTracksToConnection(connection);
+
+    if (connection.signalingState !== 'stable') {
+      return;
+    }
+
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
 
@@ -275,7 +335,47 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       mediaState: localMediaStateRef.current,
       offer,
     });
-  }, [createPeerConnection, participantName]);
+  }, [attachLocalTracksToConnection, createPeerConnection, participantName]);
+
+  const renegotiateAllPeers = useCallback(async () => {
+    const peers = Object.keys(peerConnectionsRef.current);
+    for (const peerId of peers) {
+      try {
+        await sendOfferToPeer(peerId, peerNamesRef.current[peerId] || '');
+      } catch (offerError) {
+        console.error('Failed to renegotiate peer:', offerError);
+      }
+    }
+  }, [sendOfferToPeer]);
+
+  const resetRemotePeers = useCallback(() => {
+    Object.values(peerConnectionsRef.current).forEach((connection) => {
+      connection.onicecandidate = null;
+      connection.ontrack = null;
+      connection.onconnectionstatechange = null;
+      connection.close();
+    });
+
+    peerConnectionsRef.current = {};
+    peerCameraStreamsRef.current = {};
+    peerScreenStreamsRef.current = {};
+    peerIncomingStreamsRef.current = {};
+    pendingIceCandidatesRef.current = {};
+    peerNamesRef.current = {};
+    peerMediaStateRef.current = {};
+    peerScreenMetaRef.current = {};
+    setPeerNames({});
+    setRemoteParticipants([]);
+
+    setScreenShare((current) => ({
+      ...current,
+      isActive: current.isLocalSharing && Boolean(screenStreamRef.current),
+      sharerSocketId: current.isLocalSharing ? 'local' : '',
+      sharerName: current.isLocalSharing ? participantName : '',
+      stream: current.isLocalSharing ? screenStreamRef.current : null,
+      streamId: current.isLocalSharing ? (screenStreamRef.current?.id || '') : '',
+    }));
+  }, [participantName]);
 
   const cleanup = useCallback(() => {
     if (hasLeftRef.current) {
@@ -290,7 +390,6 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
 
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
-    cameraVideoTrackRef.current = null;
 
     if (socketRef.current) {
       socketRef.current.emit('leave-room');
@@ -302,36 +401,43 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
   }, [resetRemotePeers]);
 
   const stopScreenShare = useCallback(async () => {
-    const cameraTrack = cameraVideoTrackRef.current;
+    const screenTrack = screenStreamRef.current?.getVideoTracks()[0];
 
-    await replaceOutgoingVideoTrack(cameraTrack || null);
-    screenStreamRef.current?.getTracks().forEach((track) => track.stop());
-    screenStreamRef.current = null;
-
-    if (socketRef.current) {
-      socketRef.current.emit('screenshare-stopped', {
-        roomCode: normalizedRoomCode,
+    if (screenTrack) {
+      Object.values(peerConnectionsRef.current).forEach((connection) => {
+        const sender = connection.getSenders().find((item) => item.track?.id === screenTrack.id);
+        if (sender) {
+          connection.removeTrack(sender);
+        }
       });
     }
 
-    setScreenShare((current) => ({
-      ...current,
+    socketRef.current?.emit('screenshare-stopped', {
+      roomCode: normalizedRoomCode,
+    });
+
+    screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+    screenStreamRef.current = null;
+
+    applyScreenShareState({
       isActive: false,
       sharerSocketId: '',
       sharerName: '',
       stream: null,
+      streamId: '',
       isLocalSharing: false,
       requestStatus: '',
-    }));
-  }, [normalizedRoomCode, replaceOutgoingVideoTrack]);
+    });
+
+    await renegotiateAllPeers();
+  }, [applyScreenShareState, normalizedRoomCode, renegotiateAllPeers]);
 
   const startApprovedScreenShare = useCallback(async () => {
     try {
-      setScreenShare((current) => ({
-        ...current,
+      applyScreenShareState({
         requestStatus: 'Memilih layar...',
         requestError: '',
-      }));
+      });
 
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
@@ -350,31 +456,39 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
         });
       };
 
-      await replaceOutgoingVideoTrack(screenTrack);
+      Object.values(peerConnectionsRef.current).forEach((connection) => {
+        const alreadyAdded = connection.getSenders().some((sender) => sender.track?.id === screenTrack.id);
+        if (!alreadyAdded) {
+          connection.addTrack(screenTrack, displayStream);
+        }
+      });
 
       socketRef.current?.emit('screenshare-started', {
         roomCode: normalizedRoomCode,
         sharerName: participantName,
+        streamId: displayStream.id,
       });
 
-      setScreenShare({
+      applyScreenShareState({
         isActive: true,
         sharerSocketId: 'local',
         sharerName: participantName,
         stream: displayStream,
+        streamId: displayStream.id,
         isLocalSharing: true,
         requestStatus: '',
         requestError: '',
       });
+
+      await renegotiateAllPeers();
     } catch (shareError) {
       console.error('Failed to start screen share:', shareError);
-      setScreenShare((current) => ({
-        ...current,
+      applyScreenShareState({
         requestStatus: '',
         requestError: shareError.message || 'Gagal memulai screen share.',
-      }));
+      });
     }
-  }, [normalizedRoomCode, participantName, replaceOutgoingVideoTrack, stopScreenShare]);
+  }, [applyScreenShareState, normalizedRoomCode, participantName, renegotiateAllPeers, stopScreenShare]);
 
   useEffect(() => {
     let isMounted = true;
@@ -401,7 +515,6 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
         }
 
         localStreamRef.current = stream;
-        cameraVideoTrackRef.current = stream.getVideoTracks()[0] || null;
         localMediaStateRef.current = {
           isMuted: !shouldEnableMic,
           isCameraOff: !shouldEnableCamera,
@@ -435,9 +548,15 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
           }
 
           joinRoom();
-          socket.emit('get-room-state', {
-            roomCode: normalizedRoomCode,
-          });
+          socket.emit('get-room-state', { roomCode: normalizedRoomCode });
+
+          if (screenStreamRef.current) {
+            socket.emit('screenshare-started', {
+              roomCode: normalizedRoomCode,
+              sharerName: participantName,
+              streamId: screenStreamRef.current.id,
+            });
+          }
         });
 
         socket.on('room-info', (roomInfo) => {
@@ -463,6 +582,29 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
               setPeerName(peer.socketId, peer.participantName);
               setPeerMediaState(peer.socketId, peer.mediaState);
             });
+
+          const activeScreenShare = roomState.screenShareStatus;
+          if (activeScreenShare?.isActive && activeScreenShare.sharerSocketId) {
+            const isLocalShare = activeScreenShare.sharerSocketId === localSocketIdRef.current;
+            if (!isLocalShare) {
+              applyIncomingScreenMeta(activeScreenShare.sharerSocketId, {
+                isActive: true,
+                streamId: activeScreenShare.streamId,
+                sharerName: activeScreenShare.sharerName,
+              });
+            }
+
+            applyScreenShareState({
+              isActive: true,
+              sharerSocketId: isLocalShare ? 'local' : activeScreenShare.sharerSocketId,
+              sharerName: activeScreenShare.sharerName,
+              streamId: activeScreenShare.streamId || '',
+              stream: isLocalShare
+                ? screenStreamRef.current
+                : peerScreenStreamsRef.current[activeScreenShare.sharerSocketId] || null,
+              isLocalSharing: isLocalShare,
+            });
+          }
         });
 
         socket.on('room-join-error', ({ roomCode: failedRoomCode, message }) => {
@@ -490,7 +632,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
           setPeerMediaState(socketId, mediaState);
 
           try {
-            await buildAndSendOffer(socketId, peerName);
+            await sendOfferToPeer(socketId, peerName);
           } catch (offerError) {
             console.error('Failed to create offer for new peer:', offerError);
           }
@@ -501,6 +643,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
           setPeerMediaState(caller, mediaState);
 
           const connection = createPeerConnection(caller, peerName);
+          attachLocalTracksToConnection(connection);
           await connection.setRemoteDescription(new RTCSessionDescription(offer));
           await flushPendingIceCandidates(caller, connection);
 
@@ -550,11 +693,42 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
         });
 
         socket.on('user-left', (payload) => {
-          removePeer(typeof payload === 'string' ? payload : payload.socketId);
+          const peerId = typeof payload === 'string' ? payload : payload.socketId;
+          const activeScreenShare = peerScreenMetaRef.current[peerId];
+          if (activeScreenShare?.isActive) {
+            applyScreenShareState({
+              isActive: false,
+              sharerSocketId: '',
+              sharerName: '',
+              stream: null,
+              streamId: '',
+              isLocalSharing: false,
+            });
+          }
+
+          const connection = peerConnectionsRef.current[peerId];
+          if (connection) {
+            connection.onicecandidate = null;
+            connection.ontrack = null;
+            connection.onconnectionstatechange = null;
+            connection.close();
+            delete peerConnectionsRef.current[peerId];
+          }
+
+          delete peerCameraStreamsRef.current[peerId];
+          delete peerScreenStreamsRef.current[peerId];
+          delete peerIncomingStreamsRef.current[peerId];
+          delete pendingIceCandidatesRef.current[peerId];
+          delete peerNamesRef.current[peerId];
+          delete peerMediaStateRef.current[peerId];
+          delete peerScreenMetaRef.current[peerId];
+          setPeerNames({ ...peerNamesRef.current });
+          setRemoteParticipants((current) => current.filter((participant) => participant.id !== peerId));
         });
 
         socket.on('peer-left', (payload) => {
-          removePeer(typeof payload === 'string' ? payload : payload.socketId);
+          const peerId = typeof payload === 'string' ? payload : payload.socketId;
+          setRemoteParticipants((current) => current.filter((participant) => participant.id !== peerId));
         });
 
         socket.on('media-state-changed', ({ socketId, isMuted: nextMuted, isCameraOff: nextCameraOff }) => {
@@ -573,30 +747,54 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
         });
 
         socket.on('screenshare-rejected', ({ message }) => {
-          setScreenShare((current) => ({
-            ...current,
+          applyScreenShareState({
             requestStatus: '',
             requestError: message || 'Permintaan ditolak oleh host.',
-          }));
+          });
         });
 
-        socket.on('screenshare-started', ({ sharerSocketId, sharerName }) => {
-          const isLocal = sharerSocketId === localSocketIdRef.current;
-          setScreenShare((current) => ({
-            ...current,
+        socket.on('screenshare-started', ({ sharerSocketId, sharerName, streamId }) => {
+          const isLocalShare = sharerSocketId === localSocketIdRef.current;
+
+          if (!isLocalShare) {
+            applyIncomingScreenMeta(sharerSocketId, {
+              isActive: true,
+              streamId,
+              sharerName,
+            });
+          }
+
+          applyScreenShareState({
             isActive: true,
-            sharerSocketId,
+            sharerSocketId: isLocalShare ? 'local' : sharerSocketId,
             sharerName,
-            stream: isLocal ? screenStreamRef.current : null,
-            isLocalSharing: isLocal,
+            streamId: streamId || '',
+            stream: isLocalShare
+              ? screenStreamRef.current
+              : peerScreenStreamsRef.current[sharerSocketId] || null,
+            isLocalSharing: isLocalShare,
             requestStatus: '',
             requestError: '',
-          }));
+          });
         });
 
         socket.on('screenshare-stopped', ({ sharerSocketId }) => {
+          const isLocalShare = sharerSocketId === localSocketIdRef.current;
+          if (!isLocalShare) {
+            delete peerScreenStreamsRef.current[sharerSocketId];
+            delete peerScreenMetaRef.current[sharerSocketId];
+          }
+
           setScreenShare((current) => {
-            if (current.sharerSocketId && current.sharerSocketId !== sharerSocketId) {
+            if (!current.sharerSocketId) {
+              return current;
+            }
+
+            const currentSharerId = current.sharerSocketId === 'local'
+              ? localSocketIdRef.current
+              : current.sharerSocketId;
+
+            if (currentSharerId !== sharerSocketId) {
               return current;
             }
 
@@ -606,6 +804,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
               sharerSocketId: '',
               sharerName: '',
               stream: null,
+              streamId: '',
               isLocalSharing: false,
               requestStatus: '',
             };
@@ -627,15 +826,17 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       cleanup();
     };
   }, [
-    buildAndSendOffer,
+    applyIncomingScreenMeta,
+    applyScreenShareState,
+    attachLocalTracksToConnection,
     cleanup,
     createPeerConnection,
     flushPendingIceCandidates,
     normalizedRoomCode,
     participantName,
-    removePeer,
     resetRemotePeers,
     roomName,
+    sendOfferToPeer,
     setPeerMediaState,
     setPeerName,
     startApprovedScreenShare,
@@ -682,17 +883,16 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       return;
     }
 
-    setScreenShare((current) => ({
-      ...current,
+    applyScreenShareState({
       requestStatus: 'Menunggu persetujuan host...',
       requestError: '',
-    }));
+    });
 
     socketRef.current.emit('request-screenshare', {
       roomCode: normalizedRoomCode,
       requesterName: participantName,
     });
-  }, [normalizedRoomCode, participantName, screenShare.isActive, screenShare.requestStatus]);
+  }, [applyScreenShareState, normalizedRoomCode, participantName, screenShare.isActive, screenShare.requestStatus]);
 
   const approveScreenShareRequest = useCallback((request) => {
     if (!socketRef.current || !request?.requesterSocketId) {

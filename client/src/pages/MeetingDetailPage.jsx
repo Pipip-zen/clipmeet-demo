@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import ClipCreator from '@/components/ClipCreator';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { API_BASE_URL, authFetch } from '@/lib/api';
 import './MeetingDetailPage.css';
 
@@ -81,6 +82,7 @@ async function downloadAuthenticatedFile(url, fallbackName) {
 
 function MeetingDetailPage() {
   const { meetingId } = useParams();
+  const navigate = useNavigate();
   const videoRef = useRef(null);
   const [meeting, setMeeting] = useState(null);
   const [clips, setClips] = useState([]);
@@ -88,6 +90,7 @@ function MeetingDetailPage() {
   const [error, setError] = useState('');
   const [downloadError, setDownloadError] = useState('');
   const [actionState, setActionState] = useState({});
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -269,19 +272,57 @@ function MeetingDetailPage() {
 
   const hasReadyClips = clips.some((clip) => clip.status === 'ready' && clip.file_path);
 
+  const handleDeleteRecording = async () => {
+    if (!meeting) {
+      return;
+    }
+
+    try {
+      setDownloadError('');
+      setBusy('delete-recording', true);
+
+      const response = await authFetch(`${API_BASE_URL}/recordings/${meeting.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error(body.error || 'Failed to delete recording.');
+      }
+
+      navigate('/dashboard');
+    } catch (deleteError) {
+      console.error('Failed to delete recording:', deleteError);
+      setDownloadError(deleteError.message);
+    } finally {
+      setBusy('delete-recording', false);
+      setIsDeleteModalOpen(false);
+    }
+  };
+
   return (
     <main className="detail-page">
       <div className="detail-shell">
         <header className="detail-header">
-          <div>
+          <div className="detail-header__copy">
             <h1 className="detail-title">
               {getMeetingTitle(meeting, storedRooms)}
             </h1>
             <p className="detail-subtitle">{meetingId}</p>
           </div>
-          <Link className="detail-button" to="/dashboard">
-            Kembali ke Dashboard
-          </Link>
+          <div className="detail-header__actions">
+            <button
+              type="button"
+              className="detail-button detail-button--danger"
+              onClick={() => setIsDeleteModalOpen(true)}
+              disabled={!meeting}
+            >
+              Delete Recording
+            </button>
+            <Link className="detail-button" to="/dashboard">
+              Kembali ke Dashboard
+            </Link>
+          </div>
         </header>
 
         {isLoading ? <p className="detail-empty">Memuat meeting...</p> : null}
@@ -424,6 +465,22 @@ function MeetingDetailPage() {
           </div>
         ) : null}
       </div>
+
+      {isDeleteModalOpen && meeting ? (
+        <ConfirmDialog
+          title="Delete recording?"
+          message={`Recording ${getMeetingTitle(meeting, storedRooms)} akan dihapus bersama video utama dan semua clip.`}
+          confirmLabel="Delete Recording"
+          cancelLabel="Cancel"
+          isBusy={Boolean(actionState['delete-recording'])}
+          onCancel={() => {
+            if (!actionState['delete-recording']) {
+              setIsDeleteModalOpen(false);
+            }
+          }}
+          onConfirm={handleDeleteRecording}
+        />
+      ) : null}
     </main>
   );
 }

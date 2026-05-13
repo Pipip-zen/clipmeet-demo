@@ -56,6 +56,12 @@ function createRoomState(roomCode, roomName = roomCode) {
     recordingStatus: {
       isRecording: false,
     },
+    screenShareStatus: {
+      isActive: false,
+      sharerSocketId: '',
+      sharerName: '',
+      streamId: '',
+    },
     cleanupTimer: null,
   };
 }
@@ -121,6 +127,7 @@ function serializeRoomState(room) {
     participants: Array.from(room.participants.entries()).map(serializeParticipant),
     markers: room.markers,
     recordingStatus: room.recordingStatus,
+    screenShareStatus: room.screenShareStatus,
   };
 }
 
@@ -142,6 +149,14 @@ function removeParticipantFromRoom(socket, options = {}) {
   const room = rooms.get(roomCode);
   if (room) {
     room.participants.delete(socket.id);
+    if (room.screenShareStatus?.sharerSocketId === socket.id) {
+      room.screenShareStatus = {
+        isActive: false,
+        sharerSocketId: '',
+        sharerName: '',
+        streamId: '',
+      };
+    }
     if (room.participants.size === 0) {
       scheduleRoomCleanup(roomCode);
     }
@@ -392,17 +407,38 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('screenshare-started', ({ roomCode, sharerName }) => {
+  socket.on('screenshare-started', ({ roomCode, sharerName, streamId }) => {
     const normalizedRoomCode = normalizeRoomCode(roomCode);
+    const room = rooms.get(normalizedRoomCode);
+
+    if (room) {
+      room.screenShareStatus = {
+        isActive: true,
+        sharerSocketId: socket.id,
+        sharerName: sharerName || socketToParticipantName.get(socket.id) || 'Guest',
+        streamId: typeof streamId === 'string' ? streamId : '',
+      };
+    }
 
     io.to(normalizedRoomCode).emit('screenshare-started', {
       sharerSocketId: socket.id,
       sharerName: sharerName || socketToParticipantName.get(socket.id) || 'Guest',
+      streamId: typeof streamId === 'string' ? streamId : '',
     });
   });
 
   socket.on('screenshare-stopped', ({ roomCode }) => {
     const normalizedRoomCode = normalizeRoomCode(roomCode);
+    const room = rooms.get(normalizedRoomCode);
+
+    if (room && room.screenShareStatus?.sharerSocketId === socket.id) {
+      room.screenShareStatus = {
+        isActive: false,
+        sharerSocketId: '',
+        sharerName: '',
+        streamId: '',
+      };
+    }
 
     io.to(normalizedRoomCode).emit('screenshare-stopped', {
       sharerSocketId: socket.id,

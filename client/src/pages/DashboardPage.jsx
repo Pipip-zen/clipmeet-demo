@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { API_BASE_URL, authFetch } from '@/lib/api';
 import './DashboardPage.css';
 
@@ -36,6 +37,8 @@ function DashboardPage() {
   const [meetings, setMeetings] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [pendingDeleteMeeting, setPendingDeleteMeeting] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const storedRooms = readStoredRooms();
 
   useEffect(() => {
@@ -63,6 +66,34 @@ function DashboardPage() {
     fetchMeetings();
   }, []);
 
+  const handleDeleteMeeting = async () => {
+    if (!pendingDeleteMeeting) {
+      return;
+    }
+
+    try {
+      setIsDeleting(true);
+      setError('');
+
+      const response = await authFetch(`${API_BASE_URL}/recordings/${pendingDeleteMeeting.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error(body.error || 'Failed to delete recording.');
+      }
+
+      setMeetings((current) => current.filter((meeting) => meeting.id !== pendingDeleteMeeting.id));
+      setPendingDeleteMeeting(null);
+    } catch (deleteError) {
+      console.error('Failed to delete recording:', deleteError);
+      setError(deleteError.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <main className="dashboard-page">
       <div className="dashboard-shell">
@@ -83,22 +114,48 @@ function DashboardPage() {
         <section className="meeting-list" aria-label="Daftar meeting">
           {meetings.map((meeting) => (
             <article className="meeting-card" key={meeting.id}>
-              <div>
+              <div className="meeting-card__content">
                 <h2 className="meeting-card__title">
                   {getMeetingTitle(meeting, storedRooms)}
                 </h2>
+                <p className="meeting-card__room">{meeting.room_id}</p>
                 <p className="meeting-card__date">{formatDate(meeting.started_at)}</p>
               </div>
-              <button
-                type="button"
-                className="meeting-card__button"
-                onClick={() => navigate(`/dashboard/${meeting.id}`)}
-              >
-                Lihat Detail
-              </button>
+              <div className="meeting-card__actions">
+                <button
+                  type="button"
+                  className="meeting-card__button"
+                  onClick={() => navigate(`/dashboard/${meeting.id}`)}
+                >
+                  Lihat Detail
+                </button>
+                <button
+                  type="button"
+                  className="meeting-card__button meeting-card__button--danger"
+                  onClick={() => setPendingDeleteMeeting(meeting)}
+                >
+                  Delete Recording
+                </button>
+              </div>
             </article>
           ))}
         </section>
+
+        {pendingDeleteMeeting ? (
+          <ConfirmDialog
+            title="Delete recording?"
+            message={`Recording ${getMeetingTitle(pendingDeleteMeeting, storedRooms)} akan dihapus bersama video utama dan semua clip.`}
+            confirmLabel="Delete Recording"
+            cancelLabel="Cancel"
+            isBusy={isDeleting}
+            onCancel={() => {
+              if (!isDeleting) {
+                setPendingDeleteMeeting(null);
+              }
+            }}
+            onConfirm={handleDeleteMeeting}
+          />
+        ) : null}
       </div>
     </main>
   );

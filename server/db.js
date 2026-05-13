@@ -253,6 +253,22 @@ const getClipsByMeetingId = (meetingId) => {
   `).all(meetingId);
 };
 
+const deleteMeetingById = (meetingId, userId) => {
+  const meeting = getMeetingById(meetingId, userId);
+  if (!meeting) {
+    return null;
+  }
+
+  const transaction = db.transaction(() => {
+    db.prepare('DELETE FROM markers WHERE meeting_id = ?').run(meetingId);
+    db.prepare('DELETE FROM clips WHERE meeting_id = ?').run(meetingId);
+    db.prepare('DELETE FROM meetings WHERE id = ? AND user_id = ?').run(meetingId, userId);
+  });
+
+  transaction();
+  return meeting;
+};
+
 module.exports = {
   db,
   createUser,
@@ -270,4 +286,5 @@ module.exports = {
   getClipByIdForUser,
   getClipsByMeetingId,
   getNextClipSequenceNumber,
+  deleteMeetingById,
 };

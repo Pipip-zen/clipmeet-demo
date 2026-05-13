@@ -3,11 +3,13 @@
   padding: 32px;
   background: #f8fafc;
   color: #111827;
+  overflow-x: hidden;
 }
 
 .dashboard-shell {
   width: min(960px, 100%);
   margin: 0 auto;
+  min-width: 0;
 }
 
 .dashboard-header {
@@ -16,12 +18,15 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 28px;
+  min-width: 0;
 }
 
 .dashboard-title {
   margin: 0;
   font-size: 2rem;
   font-weight: 800;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dashboard-button,
@@ -44,6 +49,7 @@
 .meeting-list {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .meeting-card {
@@ -55,18 +61,50 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #ffffff;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.meeting-card__content,
+.meeting-card__actions {
+  min-width: 0;
+}
+
+.meeting-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .meeting-card__title {
   margin: 0 0 6px;
   font-size: 1.05rem;
   font-weight: 800;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.meeting-card__room {
+  margin: 0 0 6px;
+  color: #0f172a;
+  font-size: 0.9rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .meeting-card__date {
   margin: 0;
   color: #64748b;
   font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.meeting-card__button--danger {
+  border-color: #dc2626;
+  background: #fff5f5;
+  color: #b91c1c;
 }
 
 .dashboard-empty,
@@ -75,6 +113,7 @@
   border-radius: 8px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
+  overflow-wrap: anywhere;
 }
 
 .dashboard-error {
@@ -91,5 +130,9 @@
   .meeting-card {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .meeting-card__actions {
+    justify-content: stretch;
   }
 }

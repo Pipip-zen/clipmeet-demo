@@ -34,6 +34,7 @@ function MeetingPage() {
   const navigate = useNavigate();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [isMarkerPanelOpen, setIsMarkerPanelOpen] = useState(false);
+  const [copyState, setCopyState] = useState('');
   const currentRoom = readJsonStorage('clipmeet_current_room', {});
   const participantName = localStorage.getItem('clipmeet_participant_name') || 'Guest';
   const localRoomName =
@@ -67,15 +68,9 @@ function MeetingPage() {
     error: recorderError,
     startRecording,
     stopRecording,
-  } = useRecorder(participants, resolvedRoomId, roomName);
+  } = useRecorder(participants, resolvedRoomId, roomName, screenShare);
   const layout = useMemo(() => getMeetingLayout(participants.length), [participants.length]);
-  const sharedParticipant = useMemo(
-    () => participants.find((participant) => participant.id === screenShare.sharerSocketId),
-    [participants, screenShare.sharerSocketId]
-  );
-  const screenShareStream = screenShare.isLocalSharing
-    ? screenShare.stream
-    : sharedParticipant?.stream || null;
+  const screenShareStream = screenShare.stream || null;
 
   useEffect(() => {
     if (!startedAt) {
@@ -88,6 +83,18 @@ function MeetingPage() {
 
     return () => window.clearInterval(timerId);
   }, [startedAt]);
+
+  useEffect(() => {
+    if (!copyState) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCopyState('');
+    }, 1800);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [copyState]);
 
   const elapsedSeconds = useMemo(() => {
     if (!startedAt) {
@@ -148,12 +155,27 @@ function MeetingPage() {
     navigate('/');
   };
 
+  const handleCopyRoomId = async () => {
+    await navigator.clipboard.writeText(resolvedRoomId);
+    setCopyState('roomId');
+  };
+
+  const handleCopyInviteLink = async () => {
+    const inviteUrl = `${window.location.origin}/room/${resolvedRoomId}`;
+    await navigator.clipboard.writeText(inviteUrl);
+    setCopyState('inviteLink');
+  };
+
   return (
     <main className={screenShare.isActive ? 'meeting-page meeting-page--screen-share' : 'meeting-page'}>
       <TopBar
+        roomId={resolvedRoomId}
         roomName={roomName}
         participantCount={participants.length}
         duration={duration}
+        onCopyRoomId={handleCopyRoomId}
+        onCopyInviteLink={handleCopyInviteLink}
+        copyState={copyState}
       />
 
       {error ? <p className="meeting-error">{error}</p> : null}

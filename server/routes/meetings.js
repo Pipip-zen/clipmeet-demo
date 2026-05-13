@@ -40,6 +40,17 @@ function buildAbsoluteMediaPath(relativePath) {
   return path.join(__dirname, '../../', relativePath.replace(/^\//, ''));
 }
 
+function removeFileIfExists(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  const absolutePath = buildAbsoluteMediaPath(filePath);
+  if (fs.existsSync(absolutePath)) {
+    fs.unlinkSync(absolutePath);
+  }
+}
+
 function sendDownload(res, absolutePath, downloadName) {
   return res.download(absolutePath, downloadName, (downloadError) => {
     if (!downloadError || res.headersSent) {
@@ -229,6 +240,31 @@ router.get('/recordings/:recordingId/download', authenticateToken, (req, res) =>
     }
 
     return sendDownload(res, absolutePath, formatRecordingFileName(meeting));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/recordings/:recordingId', authenticateToken, (req, res) => {
+  try {
+    const meeting = db.getMeetingById(req.params.recordingId, req.user.userId);
+    if (!meeting) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+
+    db.deleteMeetingById(req.params.recordingId, req.user.userId);
+
+    try {
+      removeFileIfExists(meeting.file_path);
+      (meeting.clips || []).forEach((clip) => {
+        removeFileIfExists(clip.file_path);
+      });
+    } catch (fileError) {
+      console.error('Failed to remove recording files:', fileError);
+      return res.status(500).json({ error: 'Recording deleted but file cleanup failed.' });
+    }
+
+    return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

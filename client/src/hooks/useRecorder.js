@@ -9,6 +9,7 @@ const HEADER_HEIGHT = 132;
 const FOOTER_HEIGHT = 96;
 const PADDING = 28;
 const GAP = 18;
+const STRIP_HEIGHT = 176;
 
 function getRecorderOptions() {
   if (MediaRecorder.isTypeSupported(PREFERRED_MIME_TYPE)) {
@@ -115,7 +116,25 @@ function drawPill(ctx, x, y, label, value, showDot = false) {
   return width;
 }
 
-function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) {
+function drawFallbackTile(ctx, participant, x, y, width, height) {
+  const tileGradient = ctx.createLinearGradient(x, y, x + width, y + height);
+  tileGradient.addColorStop(0, 'rgba(59, 130, 246, 0.28)');
+  tileGradient.addColorStop(1, 'rgba(34, 211, 238, 0.18)');
+  ctx.fillStyle = tileGradient;
+  ctx.fillRect(x, y, width, height);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = '700 84px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(
+    (participant.name || 'G').charAt(0).toUpperCase(),
+    x + width / 2,
+    y + height / 2
+  );
+  ctx.textAlign = 'left';
+}
+
+function createMixedRecorder({ getParticipants, getRoomName, getDurationText, getScreenShare }) {
   const canvas = document.createElement('canvas');
   canvas.width = RECORDING_WIDTH;
   canvas.height = RECORDING_HEIGHT;
@@ -123,64 +142,216 @@ function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) 
   const ctx = canvas.getContext('2d');
   const audioContext = new AudioContext();
   const destination = audioContext.createMediaStreamDestination();
-  const videoElements = new Map();
+  const streamEntries = new Map();
   const audioSources = new Map();
   let animationFrameId = null;
 
+  const syncStreamEntry = async (key, stream) => {
+    const existingEntry = streamEntries.get(key);
+    if (existingEntry?.stream === stream) {
+      return;
+    }
+
+    if (existingEntry) {
+      existingEntry.video.pause();
+      existingEntry.video.srcObject = null;
+      streamEntries.delete(key);
+    }
+
+    if (!stream) {
+      return;
+    }
+
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    await video.play().catch(() => {});
+    streamEntries.set(key, { video, stream });
+  };
+
+  const syncAudioSource = (key, stream) => {
+    const hasAudio = Boolean(stream?.getAudioTracks().length);
+    const existingAudio = audioSources.get(key);
+
+    if ((!stream || !hasAudio) && existingAudio) {
+      existingAudio.source.disconnect();
+      audioSources.delete(key);
+      return;
+    }
+
+    if (!stream || !hasAudio) {
+      return;
+    }
+
+    if (existingAudio?.stream === stream) {
+      return;
+    }
+
+    if (existingAudio) {
+      existingAudio.source.disconnect();
+    }
+
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(destination);
+    audioSources.set(key, { source, stream });
+  };
+
   const syncParticipants = async () => {
     const participants = getParticipants();
-    const activeIds = new Set(participants.map((participant) => participant.id));
+    const screenShare = getScreenShare();
+    const activeStreamKeys = new Set();
+    const activeAudioKeys = new Set();
 
     for (const participant of participants) {
-      const existingVideo = videoElements.get(participant.id);
-      if (!existingVideo || existingVideo.stream !== participant.stream) {
-        if (existingVideo) {
-          existingVideo.video.pause();
-          existingVideo.video.srcObject = null;
-        }
-
-        if (participant.stream) {
-          const video = document.createElement('video');
-          video.srcObject = participant.stream;
-          video.autoplay = true;
-          video.muted = true;
-          video.playsInline = true;
-          await video.play().catch(() => {});
-          videoElements.set(participant.id, { video, stream: participant.stream });
-        }
-      }
-
-      const existingAudio = audioSources.get(participant.id);
-      const hasAudio = participant.stream?.getAudioTracks().length > 0;
-      if ((!existingAudio || existingAudio.stream !== participant.stream) && hasAudio) {
-        if (existingAudio) {
-          existingAudio.source.disconnect();
-        }
-
-        const source = audioContext.createMediaStreamSource(participant.stream);
-        source.connect(destination);
-        audioSources.set(participant.id, { source, stream: participant.stream });
-      }
+      const streamKey = `participant:${participant.id}`;
+      activeStreamKeys.add(streamKey);
+      activeAudioKeys.add(streamKey);
+      await syncStreamEntry(streamKey, participant.stream);
+      syncAudioSource(streamKey, participant.stream);
     }
 
-    for (const [participantId, entry] of videoElements.entries()) {
-      if (!activeIds.has(participantId)) {
+    if (screenShare?.isActive && screenShare.stream) {
+      const stageKey = `screen:${screenShare.sharerSocketId || 'unknown'}`;
+      activeStreamKeys.add(stageKey);
+      activeAudioKeys.add(stageKey);
+      await syncStreamEntry(stageKey, screenShare.stream);
+      syncAudioSource(stageKey, screenShare.stream);
+    }
+
+    for (const [key, entry] of streamEntries.entries()) {
+      if (!activeStreamKeys.has(key)) {
         entry.video.pause();
         entry.video.srcObject = null;
-        videoElements.delete(participantId);
+        streamEntries.delete(key);
       }
     }
 
-    for (const [participantId, entry] of audioSources.entries()) {
-      if (!activeIds.has(participantId)) {
+    for (const [key, entry] of audioSources.entries()) {
+      if (!activeAudioKeys.has(key)) {
         entry.source.disconnect();
-        audioSources.delete(participantId);
+        audioSources.delete(key);
       }
     }
   };
 
-  const drawFrame = () => {
-    const participants = getParticipants();
+  const drawParticipantTile = (participant, x, y, width, height, isCompact = false) => {
+    const footerHeight = isCompact ? 42 : 68;
+    const bodyHeight = height - footerHeight;
+    const radius = isCompact ? 20 : 28;
+
+    roundedRect(ctx, x, y, width, height, radius);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+    ctx.fill();
+    ctx.strokeStyle = participant.isLocal
+      ? 'rgba(96, 165, 250, 0.5)'
+      : 'rgba(148, 163, 184, 0.2)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.save();
+    roundedRect(ctx, x, y, width, height, radius);
+    ctx.clip();
+
+    const videoEntry = streamEntries.get(`participant:${participant.id}`);
+    const canDrawVideo =
+      videoEntry &&
+      !participant.isCameraOff &&
+      videoEntry.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+
+    if (canDrawVideo) {
+      drawVideoCover(ctx, videoEntry.video, x, y, width, bodyHeight);
+    } else {
+      drawFallbackTile(ctx, participant, x, y, width, bodyHeight);
+    }
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.fillRect(x, y, width, isCompact ? 34 : 44);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = isCompact ? '500 16px Arial' : '500 20px Arial';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(participant.isCameraOff ? 'Camera off' : 'Camera on', x + 16, y + (isCompact ? 17 : 22));
+    const micStatus = participant.isMuted ? 'Muted' : 'Mic on';
+    ctx.fillText(
+      micStatus,
+      x + width - ctx.measureText(micStatus).width - 16,
+      y + (isCompact ? 17 : 22)
+    );
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.96)';
+    ctx.fillRect(x, y + bodyHeight, width, footerHeight);
+    ctx.fillStyle = '#f8fafc';
+    const nameSize = fitText(ctx, participant.name, width - (participant.isLocal ? 120 : 40), isCompact ? 22 : 30, 700);
+    ctx.font = `700 ${nameSize}px Arial`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(participant.name, x + 18, y + bodyHeight + (isCompact ? 28 : 42));
+
+    if (participant.isLocal) {
+      roundedRect(ctx, x + width - 76, y + bodyHeight + (isCompact ? 6 : 14), 56, 30, 15);
+      ctx.fillStyle = 'rgba(30, 64, 175, 0.42)';
+      ctx.fill();
+      ctx.fillStyle = '#bfdbfe';
+      ctx.font = isCompact ? '600 16px Arial' : '600 18px Arial';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('You', x + width - 58, y + bodyHeight + (isCompact ? 21 : 29));
+    }
+
+    ctx.restore();
+  };
+
+  const drawScreenStage = (screenShare, participants) => {
+    const stageTop = HEADER_HEIGHT + PADDING;
+    const stripTop = RECORDING_HEIGHT - FOOTER_HEIGHT - PADDING - STRIP_HEIGHT;
+    const stageHeight = stripTop - stageTop - GAP;
+    const stageWidth = RECORDING_WIDTH - PADDING * 2;
+
+    roundedRect(ctx, PADDING, stageTop, stageWidth, stageHeight, 28);
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.92)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.2)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.save();
+    roundedRect(ctx, PADDING, stageTop, stageWidth, stageHeight, 28);
+    ctx.clip();
+
+    const stageEntry = streamEntries.get(`screen:${screenShare.sharerSocketId || 'unknown'}`);
+    const canDrawStage = stageEntry && stageEntry.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+    if (canDrawStage) {
+      drawVideoCover(ctx, stageEntry.video, PADDING, stageTop, stageWidth, stageHeight);
+    } else {
+      const placeholder = {
+        name: screenShare.sharerName || 'Screen Share',
+      };
+      drawFallbackTile(ctx, placeholder, PADDING, stageTop, stageWidth, stageHeight);
+    }
+
+    ctx.restore();
+
+    roundedRect(ctx, PADDING + 20, stageTop + stageHeight - 72, 360, 44, 22);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    ctx.fill();
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '700 22px Arial';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${screenShare.sharerName} sharing screen`, PADDING + 40, stageTop + stageHeight - 50);
+
+    const stripCount = Math.max(1, participants.length);
+    const stripWidth = stageWidth;
+    const tileWidth = Math.max(180, Math.min(280, (stripWidth - Math.max(0, stripCount - 1) * GAP) / stripCount));
+    const tileHeight = STRIP_HEIGHT;
+
+    participants.forEach((participant, index) => {
+      const totalWidth = stripCount * tileWidth + Math.max(0, stripCount - 1) * GAP;
+      const startX = PADDING + Math.max(0, (stripWidth - totalWidth) / 2);
+      const x = startX + index * (tileWidth + GAP);
+      drawParticipantTile(participant, x, stripTop, tileWidth, tileHeight, true);
+    });
+  };
+
+  const drawGrid = (participants) => {
     const layout = getMeetingLayout(participants.length || 1);
     const gridTop = HEADER_HEIGHT + PADDING;
     const gridBottom = RECORDING_HEIGHT - FOOTER_HEIGHT - PADDING;
@@ -188,6 +359,19 @@ function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) 
     const availableHeight = gridBottom - gridTop;
     const tileWidth = (availableWidth - (layout.columns - 1) * GAP) / layout.columns;
     const tileHeight = (availableHeight - (layout.rows - 1) * GAP) / layout.rows;
+
+    participants.forEach((participant, index) => {
+      const row = Math.floor(index / layout.columns);
+      const column = index % layout.columns;
+      const x = PADDING + column * (tileWidth + GAP);
+      const y = gridTop + row * (tileHeight + GAP);
+      drawParticipantTile(participant, x, y, tileWidth, tileHeight);
+    });
+  };
+
+  const drawFrame = () => {
+    const participants = getParticipants();
+    const screenShare = getScreenShare();
 
     const gradient = ctx.createLinearGradient(0, 0, 0, RECORDING_HEIGHT);
     gradient.addColorStop(0, '#111827');
@@ -216,88 +400,17 @@ function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) 
     ctx.textBaseline = 'top';
     ctx.fillStyle = '#94a3b8';
     ctx.font = '700 18px Arial';
-    ctx.fillText('LIVE MEETING', 48, 48);
+    ctx.fillText(screenShare?.isActive ? 'LIVE SCREEN SHARE' : 'LIVE MEETING', 48, 48);
     ctx.fillStyle = '#f8fafc';
     const titleSize = fitText(ctx, getRoomName(), titleMaxWidth, 54, 700);
     ctx.font = `700 ${titleSize}px Arial`;
     ctx.fillText(getRoomName(), 48, 82);
 
-    participants.forEach((participant, index) => {
-      const row = Math.floor(index / layout.columns);
-      const column = index % layout.columns;
-      const x = PADDING + column * (tileWidth + GAP);
-      const y = gridTop + row * (tileHeight + GAP);
-      const footerHeight = 68;
-      const bodyHeight = tileHeight - footerHeight;
-
-      roundedRect(ctx, x, y, tileWidth, tileHeight, 28);
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
-      ctx.fill();
-      ctx.strokeStyle = participant.isLocal
-        ? 'rgba(96, 165, 250, 0.5)'
-        : 'rgba(148, 163, 184, 0.2)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      ctx.save();
-      roundedRect(ctx, x, y, tileWidth, tileHeight, 28);
-      ctx.clip();
-
-      const videoEntry = videoElements.get(participant.id);
-      const canDrawVideo =
-        videoEntry &&
-        !participant.isCameraOff &&
-        videoEntry.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
-
-      if (canDrawVideo) {
-        drawVideoCover(ctx, videoEntry.video, x, y, tileWidth, bodyHeight);
-      } else {
-        const tileGradient = ctx.createLinearGradient(x, y, x + tileWidth, y + bodyHeight);
-        tileGradient.addColorStop(0, 'rgba(59, 130, 246, 0.28)');
-        tileGradient.addColorStop(1, 'rgba(34, 211, 238, 0.18)');
-        ctx.fillStyle = tileGradient;
-        ctx.fillRect(x, y, tileWidth, bodyHeight);
-        ctx.fillStyle = '#e2e8f0';
-        ctx.font = '700 84px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(
-          (participant.name || 'G').charAt(0).toUpperCase(),
-          x + tileWidth / 2,
-          y + bodyHeight / 2
-        );
-        ctx.textAlign = 'left';
-      }
-
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-      ctx.fillRect(x, y, tileWidth, 44);
-      ctx.fillStyle = '#cbd5e1';
-      ctx.font = '500 20px Arial';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(participant.isCameraOff ? 'Camera off' : 'Camera on', x + 20, y + 22);
-      const micStatus = participant.isMuted ? 'Muted' : 'Mic on';
-      ctx.fillText(micStatus, x + tileWidth - ctx.measureText(micStatus).width - 20, y + 22);
-
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.96)';
-      ctx.fillRect(x, y + bodyHeight, tileWidth, footerHeight);
-      ctx.fillStyle = '#f8fafc';
-      const nameSize = fitText(ctx, participant.name, tileWidth - 120, 30, 700);
-      ctx.font = `700 ${nameSize}px Arial`;
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText(participant.name, x + 20, y + bodyHeight + 42);
-
-      if (participant.isLocal) {
-        roundedRect(ctx, x + tileWidth - 80, y + bodyHeight + 14, 60, 36, 18);
-        ctx.fillStyle = 'rgba(30, 64, 175, 0.42)';
-        ctx.fill();
-        ctx.fillStyle = '#bfdbfe';
-        ctx.font = '600 18px Arial';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('You', x + tileWidth - 60, y + bodyHeight + 32);
-      }
-
-      ctx.restore();
-    });
+    if (screenShare?.isActive) {
+      drawScreenStage(screenShare, participants);
+    } else {
+      drawGrid(participants);
+    }
 
     roundedRect(ctx, 24, RECORDING_HEIGHT - FOOTER_HEIGHT, RECORDING_WIDTH - 48, 72, 24);
     ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
@@ -307,7 +420,11 @@ function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) 
     ctx.fillStyle = '#94a3b8';
     ctx.font = '600 22px Arial';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Recording full meeting stage', 56, RECORDING_HEIGHT - FOOTER_HEIGHT + 36);
+    ctx.fillText(
+      screenShare?.isActive ? 'Recording stage + participant cameras' : 'Recording participant grid',
+      56,
+      RECORDING_HEIGHT - FOOTER_HEIGHT + 36
+    );
 
     animationFrameId = requestAnimationFrame(drawFrame);
   };
@@ -324,11 +441,11 @@ function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) 
       animationFrameId = null;
     }
 
-    for (const entry of videoElements.values()) {
+    for (const entry of streamEntries.values()) {
       entry.video.pause();
       entry.video.srcObject = null;
     }
-    videoElements.clear();
+    streamEntries.clear();
 
     for (const entry of audioSources.values()) {
       entry.source.disconnect();
@@ -353,7 +470,7 @@ function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) 
   };
 }
 
-function useRecorder(participants, roomId, meetingTitle = '') {
+function useRecorder(participants, roomId, meetingTitle = '', screenShare = {}) {
   const [isRecording, setIsRecording] = useState(false);
   const [meetingId, setMeetingId] = useState(null);
   const [recordingStartTime, setRecordingStartTime] = useState(null);
@@ -361,6 +478,7 @@ function useRecorder(participants, roomId, meetingTitle = '') {
   const [error, setError] = useState('');
 
   const participantsRef = useRef(participants);
+  const screenShareRef = useRef(screenShare);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const meetingIdRef = useRef(null);
@@ -369,10 +487,11 @@ function useRecorder(participants, roomId, meetingTitle = '') {
 
   useEffect(() => {
     participantsRef.current = participants;
+    screenShareRef.current = screenShare;
     mixedRecorderRef.current?.syncParticipants().catch((syncError) => {
       console.error('Failed to sync recording participants:', syncError);
     });
-  }, [participants]);
+  }, [participants, screenShare]);
 
   const createMeeting = useCallback(async () => {
     const resolvedTitle = meetingTitle && meetingTitle !== roomId
@@ -433,15 +552,13 @@ function useRecorder(participants, roomId, meetingTitle = '') {
 
           return formatDuration(Math.floor((Date.now() - recordingStartTimeRef.current) / 1000));
         },
+        getScreenShare: () => screenShareRef.current,
       });
       const recorderOptions = getRecorderOptions();
       const recorder = recorderOptions
         ? new MediaRecorder(mixedRecorder.stream, recorderOptions)
         : new MediaRecorder(mixedRecorder.stream);
       const startTime = Date.now();
-
-      console.log('Recording audio tracks:', mixedRecorder.stream.getAudioTracks().length);
-      console.log('Recording video tracks:', mixedRecorder.stream.getVideoTracks().length);
 
       chunksRef.current = [];
       meetingIdRef.current = meeting.id;
