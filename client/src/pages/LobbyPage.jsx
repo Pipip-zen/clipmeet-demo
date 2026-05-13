@@ -17,15 +17,18 @@ function readRoomName(roomCode) {
 
 function LobbyPage() {
   const { roomCode = '------' } = useParams();
+  const normalizedRoomCode = roomCode.toUpperCase();
   const navigate = useNavigate();
   const videoRef = useRef(null);
   const [participantName, setParticipantName] = useState('');
-  const [roomName, setRoomName] = useState(roomCode);
+  const [roomName, setRoomName] = useState(normalizedRoomCode);
+  const [roomExists, setRoomExists] = useState(false);
+  const [roomError, setRoomError] = useState('');
   const { stream, isCamOn, isMicOn, toggleCam, toggleMic, error } = useLocalMedia();
 
   useEffect(() => {
-    setRoomName(readRoomName(roomCode));
-  }, [roomCode]);
+    setRoomName(readRoomName(normalizedRoomCode));
+  }, [normalizedRoomCode]);
 
   useEffect(() => {
     const socket = io(SIGNALING_SERVER_URL, {
@@ -33,21 +36,29 @@ function LobbyPage() {
     });
 
     socket.on('connect', () => {
-      socket.emit('get-room-info', roomCode);
+      socket.emit('get-room-info', normalizedRoomCode);
     });
 
     socket.on('room-info', (roomInfo) => {
-      if (roomInfo.roomCode !== roomCode || !roomInfo.roomName) {
+      if (roomInfo.roomCode !== normalizedRoomCode) {
         return;
       }
 
-      setRoomName(roomInfo.roomName);
+      setRoomExists(Boolean(roomInfo.exists));
+      if (roomInfo.roomName) {
+        setRoomName(roomInfo.roomName);
+      }
+      setRoomError(
+        roomInfo.exists
+          ? ''
+          : 'Room tidak ditemukan. Pastikan kode room benar atau buat room terlebih dahulu.'
+      );
     });
 
     return () => {
       socket.disconnect();
     };
-  }, [roomCode]);
+  }, [normalizedRoomCode]);
 
   useEffect(() => {
     if (!videoRef.current) {
@@ -63,7 +74,7 @@ function LobbyPage() {
 
   const handleEnterRoom = () => {
     const nextParticipantName = participantName.trim();
-    if (!nextParticipantName) {
+    if (!nextParticipantName || !roomExists) {
       return;
     }
 
@@ -79,13 +90,13 @@ function LobbyPage() {
     localStorage.setItem(
       'clipmeet_current_room',
       JSON.stringify({
-        roomCode,
+        roomCode: normalizedRoomCode,
         roomName,
       })
     );
 
     stopLobbyTracks();
-    navigate(`/room/${roomCode}`);
+    navigate(`/room/${normalizedRoomCode}`);
   };
 
   return (
@@ -94,7 +105,7 @@ function LobbyPage() {
         <header className="lobby-header">
           <p className="lobby-eyebrow">Room Code</p>
           <h1>{roomName}</h1>
-          <p className="lobby-room-code">{roomCode}</p>
+          <p className="lobby-room-code">{normalizedRoomCode}</p>
         </header>
 
         <div className="lobby-preview">
@@ -112,6 +123,7 @@ function LobbyPage() {
         </div>
 
         {error ? <p className="lobby-error">{error}</p> : null}
+        {roomError ? <p className="lobby-error">{roomError}</p> : null}
 
         <div className="lobby-controls">
           <button
@@ -148,7 +160,7 @@ function LobbyPage() {
             type="button"
             className="lobby-actions__primary"
             onClick={handleEnterRoom}
-            disabled={!participantName.trim()}
+            disabled={!participantName.trim() || !roomExists}
           >
             Masuk Meeting
           </button>

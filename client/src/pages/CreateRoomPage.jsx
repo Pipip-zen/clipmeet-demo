@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
 import './CreateRoomPage.css';
+
+const SIGNALING_SERVER_URL = 'http://localhost:3001';
 
 const generateRoomCode = () =>
   Array.from({ length: 6 }, () =>
@@ -19,20 +22,53 @@ function CreateRoomPage() {
   const navigate = useNavigate();
   const [roomName, setRoomName] = useState('');
   const [roomCode, setRoomCode] = useState('');
+  const [error, setError] = useState('');
+  const socketRef = useRef(null);
 
   useEffect(() => {
     setRoomCode(generateRoomCode());
   }, []);
 
+  useEffect(() => {
+    const socket = io(SIGNALING_SERVER_URL, {
+      transports: ['websocket'],
+    });
+
+    socketRef.current = socket;
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, []);
+
   const handleRegenerateCode = () => {
     setRoomCode(generateRoomCode());
+    setError('');
   };
 
-  const handleCreateRoom = (event) => {
+  const handleCreateRoom = async (event) => {
     event.preventDefault();
 
     const nextRoomName = roomName.trim();
-    if (!nextRoomName || !roomCode) {
+    const socket = socketRef.current;
+    if (!nextRoomName || !roomCode || !socket) {
+      return;
+    }
+
+    const result = await new Promise((resolve) => {
+      socket.emit(
+        'create-room',
+        {
+          roomCode,
+          roomName: nextRoomName,
+        },
+        resolve
+      );
+    });
+
+    if (!result?.ok) {
+      setError(result?.error || 'Gagal membuat room.');
       return;
     }
 
@@ -41,19 +77,20 @@ function CreateRoomPage() {
       'clipmeet_rooms',
       JSON.stringify({
         ...storedRooms,
-        [roomCode]: nextRoomName,
+        [result.roomCode]: result.roomName,
       })
     );
 
     localStorage.setItem(
       'clipmeet.pendingRoom',
       JSON.stringify({
-        roomName: nextRoomName,
-        roomCode,
+        roomName: result.roomName,
+        roomCode: result.roomCode,
       })
     );
 
-    navigate(`/lobby/${roomCode}`);
+    setError('');
+    navigate(`/lobby/${result.roomCode}`);
   };
 
   return (
@@ -78,7 +115,10 @@ function CreateRoomPage() {
             <input
               type="text"
               value={roomName}
-              onChange={(event) => setRoomName(event.target.value)}
+              onChange={(event) => {
+                setRoomName(event.target.value);
+                setError('');
+              }}
               placeholder="Rapat Tim A"
             />
           </label>
@@ -98,6 +138,7 @@ function CreateRoomPage() {
           >
             Buat Room
           </button>
+          {error ? <p className="create-room-error">{error}</p> : null}
         </form>
       </section>
     </main>

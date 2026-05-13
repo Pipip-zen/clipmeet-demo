@@ -41,26 +41,78 @@ const io = new Server(server, {
 // rooms: Map<roomCode, Map<socketId, participantName>>
 const rooms = new Map();
 const roomNames = new Map();
+const createdRooms = new Set();
 // socketToRoom: Map<socketId, roomCode>
 const socketToRoom = new Map();
 const socketToParticipantName = new Map();
 
+function normalizeRoomCode(roomCode) {
+  return typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
+}
+
+function roomExists(roomCode) {
+  return createdRooms.has(roomCode) || rooms.has(roomCode);
+}
+
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
-  socket.on('get-room-info', (roomCode) => {
-    socket.emit('room-info', {
-      roomCode,
-      roomName: roomNames.get(roomCode) || roomCode,
-    });
+  socket.on('get-room-info', (roomCode, callback) => {
+    const normalizedRoomCode = normalizeRoomCode(roomCode);
+    const roomInfo = {
+      roomCode: normalizedRoomCode,
+      roomName: roomNames.get(normalizedRoomCode) || normalizedRoomCode,
+      exists: roomExists(normalizedRoomCode),
+    };
+
+    socket.emit('room-info', roomInfo);
+
+    if (typeof callback === 'function') {
+      callback(roomInfo);
+    }
+  });
+
+  socket.on('create-room', (payload = {}, callback) => {
+    const roomCode = normalizeRoomCode(payload.roomCode);
+    const roomName =
+      typeof payload.roomName === 'string' && payload.roomName.trim()
+        ? payload.roomName.trim()
+        : roomCode;
+
+    if (!/^[A-Z]{6}$/.test(roomCode)) {
+      const errorMessage = 'Room code must be exactly 6 uppercase letters.';
+      if (typeof callback === 'function') {
+        callback({ ok: false, error: errorMessage });
+      }
+      return;
+    }
+
+    createdRooms.add(roomCode);
+    roomNames.set(roomCode, roomName);
+
+    if (typeof callback === 'function') {
+      callback({
+        ok: true,
+        roomCode,
+        roomName,
+      });
+    }
   });
 
   // Event saat user join room
   socket.on('join-room', (payload) => {
-    const roomCode = typeof payload === 'string' ? payload : payload.roomCode;
+    const roomCode = normalizeRoomCode(typeof payload === 'string' ? payload : payload.roomCode);
     const participantName =
       typeof payload === 'string' ? 'Guest' : payload.participantName || 'Guest';
     const roomName = typeof payload === 'string' ? roomCode : payload.roomName || roomCode;
+
+    if (!roomExists(roomCode)) {
+      socket.emit('room-join-error', {
+        roomCode,
+        message: 'Room tidak ditemukan. Pastikan kode room benar atau buat room terlebih dahulu.',
+      });
+      return;
+    }
 
     socket.join(roomCode);
 

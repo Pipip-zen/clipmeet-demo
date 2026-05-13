@@ -25,6 +25,7 @@ function normalizePeer(peer) {
 }
 
 function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
+  const normalizedRoomCode = roomCode.toUpperCase();
   const [localStream, setLocalStream] = useState(null);
   const [remoteParticipants, setRemoteParticipants] = useState([]);
   const [peerNames, setPeerNames] = useState({});
@@ -186,16 +187,25 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
 
         socket.on('connect', () => {
           socket.emit('join-room', {
-            roomCode,
+            roomCode: normalizedRoomCode,
             participantName,
             roomName,
           });
         });
 
         socket.on('room-info', (roomInfo) => {
-          if (roomInfo.roomCode === roomCode && roomInfo.roomName) {
+          if (roomInfo.roomCode === normalizedRoomCode && roomInfo.roomName) {
             setServerRoomName(roomInfo.roomName);
           }
+        });
+
+        socket.on('room-join-error', ({ roomCode: failedRoomCode, message }) => {
+          if (failedRoomCode !== normalizedRoomCode) {
+            return;
+          }
+
+          setError(message || 'Failed to join room.');
+          socket.disconnect();
         });
 
         socket.on('existing-peers', async (existingPeers) => {
@@ -266,7 +276,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       isMounted = false;
       cleanup();
     };
-  }, [cleanup, createPeerConnection, participantName, removePeer, roomCode, roomName, setPeerName]);
+  }, [cleanup, createPeerConnection, normalizedRoomCode, participantName, removePeer, roomName, setPeerName]);
 
   const toggleMute = useCallback(() => {
     const audioTrack = localStreamRef.current?.getAudioTracks()[0];

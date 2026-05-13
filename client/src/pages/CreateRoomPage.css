@@ -104,3 +104,10 @@
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+.create-room-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.95rem;
+  font-weight: 600;
+}

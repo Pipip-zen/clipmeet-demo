@@ -1,23 +1,26 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import './HomePage.css';
 
+const SIGNALING_SERVER_URL = 'http://localhost:3001';
 const ROOM_CODE_PATTERN = /^[A-Z]{6}$/;
 
 function HomePage() {
   const [roomId, setRoomId] = useState('');
   const [joinError, setJoinError] = useState('');
+  const [isCheckingRoom, setIsCheckingRoom] = useState(false);
   const navigate = useNavigate();
 
   const handleCreateRoom = () => {
     navigate('/create-room');
   };
 
-  const handleJoinRoom = (e) => {
+  const handleJoinRoom = async (e) => {
     e.preventDefault();
     const roomCode = roomId.trim().toUpperCase();
 
@@ -26,8 +29,31 @@ function HomePage() {
       return;
     }
 
+    setIsCheckingRoom(true);
     setJoinError('');
-    navigate(`/lobby/${roomCode}`);
+
+    const socket = io(SIGNALING_SERVER_URL, {
+      transports: ['websocket'],
+    });
+
+    try {
+      const roomInfo = await new Promise((resolve, reject) => {
+        socket.on('connect_error', reject);
+        socket.emit('get-room-info', roomCode, resolve);
+      });
+
+      if (!roomInfo?.exists) {
+        setJoinError('Room tidak ditemukan. Masukkan kode room yang valid.');
+        return;
+      }
+
+      navigate(`/lobby/${roomCode}`);
+    } catch {
+      setJoinError('Gagal memeriksa room. Pastikan server berjalan.');
+    } finally {
+      setIsCheckingRoom(false);
+      socket.disconnect();
+    }
   };
 
   return (
@@ -73,8 +99,9 @@ function HomePage() {
               variant="outline" 
               className="w-full font-semibold" 
               size="lg"
+              disabled={isCheckingRoom || roomId.trim().length !== 6}
             >
-              Join
+              {isCheckingRoom ? 'Checking...' : 'Join'}
             </Button>
           </form>
         </CardContent>
