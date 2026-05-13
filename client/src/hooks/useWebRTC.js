@@ -155,14 +155,20 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
   }, []);
 
   const syncActiveScreenShareStream = useCallback((peerId) => {
-    if (screenShare.sharerSocketId !== peerId) {
+    const activeScreenMeta = peerScreenMetaRef.current[peerId];
+    if (!activeScreenMeta?.isActive) {
       return;
     }
 
     applyScreenShareState({
+      isActive: true,
+      sharerSocketId: peerId === localSocketIdRef.current ? 'local' : peerId,
+      sharerName: activeScreenMeta.sharerName || peerNamesRef.current[peerId] || buildPeerLabel(peerId, ''),
+      streamId: activeScreenMeta.streamId || '',
       stream: peerScreenStreamsRef.current[peerId] || null,
+      isLocalSharing: peerId === localSocketIdRef.current,
     });
-  }, [applyScreenShareState, screenShare.sharerSocketId]);
+  }, [applyScreenShareState]);
 
   const classifyIncomingStream = useCallback((peerId, stream) => {
     if (!stream) {

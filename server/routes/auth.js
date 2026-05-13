@@ -22,6 +22,26 @@ function signToken(user) {
   );
 }
 
+function validatePassword(password) {
+  if (password.length < 8) {
+    return 'Password minimal 8 karakter.';
+  }
+
+  if (!/[a-z]/.test(password)) {
+    return 'Password harus mengandung huruf kecil.';
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    return 'Password harus mengandung huruf besar.';
+  }
+
+  if (!/[0-9]/.test(password)) {
+    return 'Password harus mengandung angka.';
+  }
+
+  return '';
+}
+
 router.post('/auth/register', async (req, res) => {
   const username = normalizeUsername(req.body.username);
   const password = typeof req.body.password === 'string' ? req.body.password : '';
@@ -30,8 +50,9 @@ router.post('/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'Username minimal 3 karakter.' });
   }
 
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'Password minimal 6 karakter.' });
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return res.status(400).json({ error: passwordError });
   }
 
   try {
