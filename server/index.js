@@ -374,6 +374,13 @@ io.on('connection', (socket) => {
       return;
     }
 
+    if (hostSocketId === socket.id) {
+      socket.emit('screenshare-approved', {
+        roomCode: normalizedRoomCode,
+      });
+      return;
+    }
+
     io.to(hostSocketId).emit('screenshare-request', {
       roomCode: normalizedRoomCode,
       requesterSocketId: socket.id,

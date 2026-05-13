@@ -434,6 +434,10 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
 
   const startApprovedScreenShare = useCallback(async () => {
     try {
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        throw new Error('Browser ini tidak mendukung screen share atau halaman belum berjalan di konteks aman (HTTPS/localhost).');
+      }
+
       applyScreenShareState({
         requestStatus: 'Memilih layar...',
         requestError: '',
@@ -483,9 +487,12 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       await renegotiateAllPeers();
     } catch (shareError) {
       console.error('Failed to start screen share:', shareError);
+      const screenShareMessage = shareError?.name === 'NotAllowedError'
+        ? 'Izin screen share ditolak. Pastikan Anda mengizinkan browser membagikan layar.'
+        : shareError?.message || 'Gagal memulai screen share.';
       applyScreenShareState({
         requestStatus: '',
-        requestError: shareError.message || 'Gagal memulai screen share.',
+        requestError: screenShareMessage,
       });
     }
   }, [applyScreenShareState, normalizedRoomCode, participantName, renegotiateAllPeers, stopScreenShare]);
