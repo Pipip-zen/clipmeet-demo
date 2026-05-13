@@ -11,41 +11,33 @@ const path = require('path');
 const meetingsRouter = require('./routes/meetings');
 const authRouter = require('./routes/auth');
 
-// Setup CORS
+const ROOM_CLEANUP_GRACE_MS = 60_000;
+
 app.use(cors({
-  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173', // Origin client
-  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE']
+  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
 }));
 
 app.use(express.json());
 
-// Serve static files for uploads and clips
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/clips', express.static(path.join(__dirname, '../clips')));
 
-// Setup Routes
 app.use('/api', authRouter);
 app.use('/api', meetingsRouter);
 
-// Endpoint /health untuk cek status server
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', message: 'Signaling server is running' });
 });
 
-// Setup Socket.IO dengan CORS
 const io = new Server(server, {
   cors: {
     origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
-    methods: ['GET', 'POST']
-  }
+    methods: ['GET', 'POST'],
+  },
 });
 
-// In-memory state untuk menyimpan room dan user
-// rooms: Map<roomCode, Map<socketId, participantName>>
 const rooms = new Map();
-const roomNames = new Map();
-const createdRooms = new Set();
-// socketToRoom: Map<socketId, roomCode>
 const socketToRoom = new Map();
 const socketToParticipantName = new Map();
 const socketToMediaState = new Map();
@@ -54,17 +46,118 @@ function normalizeRoomCode(roomCode) {
   return typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
 }
 
+function createRoomState(roomCode, roomName = roomCode) {
+  return {
+    roomId: roomCode,
+    roomName,
+    startedAt: Date.now(),
+    participants: new Map(),
+    markers: [],
+    recordingStatus: {
+      isRecording: false,
+    },
+    cleanupTimer: null,
+  };
+}
+
+function ensureRoom(roomCode, roomName = roomCode) {
+  const existingRoom = rooms.get(roomCode);
+  if (existingRoom) {
+    if (roomName && roomName !== roomCode) {
+      existingRoom.roomName = roomName;
+    }
+    return existingRoom;
+  }
+
+  const room = createRoomState(roomCode, roomName);
+  rooms.set(roomCode, room);
+  return room;
+}
+
 function roomExists(roomCode) {
-  return createdRooms.has(roomCode) || rooms.has(roomCode);
+  return rooms.has(roomCode);
+}
+
+function cancelRoomCleanup(room) {
+  if (!room?.cleanupTimer) {
+    return;
+  }
+
+  clearTimeout(room.cleanupTimer);
+  room.cleanupTimer = null;
+}
+
+function scheduleRoomCleanup(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room || room.participants.size > 0 || room.cleanupTimer) {
+    return;
+  }
+
+  room.cleanupTimer = setTimeout(() => {
+    const latestRoom = rooms.get(roomCode);
+    if (!latestRoom || latestRoom.participants.size > 0) {
+      return;
+    }
+
+    rooms.delete(roomCode);
+    console.log(`Room ${roomCode} deleted after grace period`);
+  }, ROOM_CLEANUP_GRACE_MS);
+}
+
+function serializeParticipant([socketId, participant]) {
+  return {
+    socketId,
+    participantName: participant.participantName,
+    mediaState: participant.mediaState || { isMuted: false, isCameraOff: false },
+  };
+}
+
+function serializeRoomState(room) {
+  return {
+    roomId: room.roomId,
+    roomCode: room.roomId,
+    roomName: room.roomName,
+    startedAt: room.startedAt,
+    participants: Array.from(room.participants.entries()).map(serializeParticipant),
+    markers: room.markers,
+    recordingStatus: room.recordingStatus,
+  };
 }
 
 function getRoomHostSocketId(roomCode) {
-  const usersInRoom = rooms.get(roomCode);
-  if (!usersInRoom || usersInRoom.size === 0) {
+  const room = rooms.get(roomCode);
+  if (!room || room.participants.size === 0) {
     return null;
   }
 
-  return usersInRoom.keys().next().value;
+  return room.participants.keys().next().value;
+}
+
+function removeParticipantFromRoom(socket, options = {}) {
+  const roomCode = socketToRoom.get(socket.id);
+  if (!roomCode) {
+    return;
+  }
+
+  const room = rooms.get(roomCode);
+  if (room) {
+    room.participants.delete(socket.id);
+    if (room.participants.size === 0) {
+      scheduleRoomCleanup(roomCode);
+    }
+  }
+
+  socketToRoom.delete(socket.id);
+  socketToParticipantName.delete(socket.id);
+  socketToMediaState.delete(socket.id);
+  socket.leave(roomCode);
+
+  console.log(`User ${socket.id} left room ${roomCode}`);
+
+  if (!options.silent) {
+    socket.broadcast.to(roomCode).emit('user-left', { socketId: socket.id });
+    socket.broadcast.to(roomCode).emit('peer-left', { socketId: socket.id });
+  }
 }
 
 io.on('connection', (socket) => {
@@ -72,10 +165,12 @@ io.on('connection', (socket) => {
 
   socket.on('get-room-info', (roomCode, callback) => {
     const normalizedRoomCode = normalizeRoomCode(roomCode);
+    const room = rooms.get(normalizedRoomCode);
     const roomInfo = {
       roomCode: normalizedRoomCode,
-      roomName: roomNames.get(normalizedRoomCode) || normalizedRoomCode,
-      exists: roomExists(normalizedRoomCode),
+      roomName: room?.roomName || normalizedRoomCode,
+      exists: Boolean(room),
+      startedAt: room?.startedAt || null,
     };
 
     socket.emit('room-info', roomInfo);
@@ -100,20 +195,43 @@ io.on('connection', (socket) => {
       return;
     }
 
-    createdRooms.add(roomCode);
-    roomNames.set(roomCode, roomName);
+    const room = ensureRoom(roomCode, roomName);
 
     if (typeof callback === 'function') {
       callback({
         ok: true,
         roomCode,
-        roomName,
+        roomName: room.roomName,
+        startedAt: room.startedAt,
       });
     }
   });
 
-  // Event saat user join room
-  socket.on('join-room', (payload) => {
+  socket.on('get-room-state', (payload = {}, callback) => {
+    const roomCode = normalizeRoomCode(typeof payload === 'string' ? payload : payload.roomCode);
+    const room = rooms.get(roomCode);
+
+    if (!room) {
+      const errorPayload = {
+        roomCode,
+        message: 'Room tidak ditemukan.',
+      };
+      socket.emit('room-join-error', errorPayload);
+      if (typeof callback === 'function') {
+        callback({ ok: false, error: errorPayload.message });
+      }
+      return;
+    }
+
+    const roomState = serializeRoomState(room);
+    socket.emit('room-state', roomState);
+
+    if (typeof callback === 'function') {
+      callback({ ok: true, roomState });
+    }
+  });
+
+  socket.on('join-room', (payload = {}, callback) => {
     const roomCode = normalizeRoomCode(typeof payload === 'string' ? payload : payload.roomCode);
     const participantName =
       typeof payload === 'string' ? 'Guest' : payload.participantName || 'Guest';
@@ -126,75 +244,82 @@ io.on('connection', (socket) => {
         };
 
     if (!roomExists(roomCode)) {
-      socket.emit('room-join-error', {
+      const errorPayload = {
         roomCode,
         message: 'Room tidak ditemukan. Pastikan kode room benar atau buat room terlebih dahulu.',
-      });
+      };
+      socket.emit('room-join-error', errorPayload);
+      if (typeof callback === 'function') {
+        callback({ ok: false, error: errorPayload.message });
+      }
       return;
     }
 
-    socket.join(roomCode);
-
-    if (!rooms.has(roomCode)) {
-      rooms.set(roomCode, new Map());
-    }
-    if (roomName && roomName !== roomCode) {
-      roomNames.set(roomCode, roomName);
+    if (socketToRoom.has(socket.id)) {
+      removeParticipantFromRoom(socket, { silent: true });
     }
 
-    const usersInRoom = rooms.get(roomCode);
-    
-    // Ambil daftar user yang sudah ada di room (kecuali user yang baru join)
-    const existingPeers = Array.from(usersInRoom.entries()).map(([socketId, name]) => ({
-      socketId,
-      participantName: name,
-      mediaState: socketToMediaState.get(socketId) || { isMuted: false, isCameraOff: false },
-    }));
+    const room = ensureRoom(roomCode, roomName);
+    cancelRoomCleanup(room);
 
-    // Tambahkan user baru ke dalam state
-    usersInRoom.set(socket.id, participantName);
+    room.participants.set(socket.id, {
+      participantName,
+      mediaState,
+    });
+
     socketToRoom.set(socket.id, roomCode);
     socketToParticipantName.set(socket.id, participantName);
     socketToMediaState.set(socket.id, mediaState);
+    socket.join(roomCode);
 
-    console.log(`User ${socket.id} joined room ${roomCode}`);
+    const roomState = serializeRoomState(room);
 
-    // Emit daftar socket ID yang sudah ada ke user yang baru join
     socket.emit('room-info', {
       roomCode,
-      roomName: roomNames.get(roomCode) || roomName || roomCode,
+      roomName: room.roomName,
+      startedAt: room.startedAt,
     });
-    socket.emit('existing-peers', existingPeers);
-    
-    // Optional: memberitahu user lain bahwa ada user baru yang join
-    // socket.broadcast.to(roomId).emit('user-joined', socket.id);
+    socket.emit('room-state', roomState);
+    socket.emit(
+      'existing-peers',
+      roomState.participants.filter((participant) => participant.socketId !== socket.id)
+    );
+
+    socket.broadcast.to(roomCode).emit('user-joined', {
+      socketId: socket.id,
+      participantName,
+      mediaState,
+    });
+
+    if (typeof callback === 'function') {
+      callback({ ok: true, roomState });
+    }
+
+    console.log(`User ${socket.id} joined room ${roomCode}`);
   });
 
-  // Event meneruskan WebRTC Offer
   socket.on('offer', ({ target, caller, participantName, mediaState, offer }) => {
     io.to(target).emit('offer', {
       caller: caller || socket.id,
       participantName: participantName || socketToParticipantName.get(socket.id) || 'Guest',
       mediaState: mediaState || socketToMediaState.get(socket.id) || { isMuted: false, isCameraOff: false },
-      offer
+      offer,
     });
   });
 
-  // Event meneruskan WebRTC Answer
   socket.on('answer', ({ target, caller, participantName, mediaState, answer }) => {
     io.to(target).emit('answer', {
       caller: caller || socket.id,
       participantName: participantName || socketToParticipantName.get(socket.id) || 'Guest',
       mediaState: mediaState || socketToMediaState.get(socket.id) || { isMuted: false, isCameraOff: false },
-      answer
+      answer,
     });
   });
 
-  // Event meneruskan ICE Candidate
   socket.on('ice-candidate', ({ target, caller, candidate }) => {
     io.to(target).emit('ice-candidate', {
       caller: caller || socket.id,
-      candidate
+      candidate,
     });
   });
 
@@ -204,11 +329,18 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const room = rooms.get(roomCode);
     const mediaState = {
       isMuted: Boolean(isMuted),
       isCameraOff: Boolean(isCameraOff),
     };
+
     socketToMediaState.set(socket.id, mediaState);
+
+    const participant = room?.participants.get(socket.id);
+    if (participant) {
+      participant.mediaState = mediaState;
+    }
 
     socket.broadcast.to(roomCode).emit('media-state-changed', {
       socketId: socket.id,
@@ -277,38 +409,13 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Fungsi untuk handle user keluar dari room
-  const handleLeaveRoom = () => {
-    const roomId = socketToRoom.get(socket.id);
-    if (roomId) {
-        const usersInRoom = rooms.get(roomId);
-        if (usersInRoom) {
-        usersInRoom.delete(socket.id);
-        if (usersInRoom.size === 0) {
-          rooms.delete(roomId); // Hapus room jika kosong
-          roomNames.delete(roomId);
-        }
-      }
-      
-      socketToRoom.delete(socket.id);
-      socketToParticipantName.delete(socket.id);
-      socketToMediaState.delete(socket.id);
-      socket.leave(roomId);
-      
-      console.log(`User ${socket.id} left room ${roomId}`);
-      
-      // Broadcast event peer-left ke semua user di room
-      socket.broadcast.to(roomId).emit('peer-left', { socketId: socket.id });
-    }
-  };
+  socket.on('leave-room', () => {
+    removeParticipantFromRoom(socket);
+  });
 
-  // Event saat user sengaja leave-room
-  socket.on('leave-room', handleLeaveRoom);
-
-  // Event saat user terputus koneksinya secara tidak sengaja (misal: tutup tab)
   socket.on('disconnect', () => {
     console.log(`User disconnected: ${socket.id}`);
-    handleLeaveRoom();
+    removeParticipantFromRoom(socket);
   });
 });
 

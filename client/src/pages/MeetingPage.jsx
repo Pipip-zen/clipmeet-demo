@@ -32,7 +32,7 @@ function MeetingPage() {
   const { roomCode, roomId } = useParams();
   const resolvedRoomId = roomCode || roomId || 'Unknown';
   const navigate = useNavigate();
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [isMarkerPanelOpen, setIsMarkerPanelOpen] = useState(false);
   const currentRoom = readJsonStorage('clipmeet_current_room', {});
   const participantName = localStorage.getItem('clipmeet_participant_name') || 'Guest';
@@ -44,6 +44,7 @@ function MeetingPage() {
     participants,
     peerNames,
     roomName: syncedRoomName,
+    startedAt,
     isMuted,
     isCameraOff,
     screenShare,
@@ -77,12 +78,24 @@ function MeetingPage() {
     : sharedParticipant?.stream || null;
 
   useEffect(() => {
+    if (!startedAt) {
+      return undefined;
+    }
+
     const timerId = window.setInterval(() => {
-      setElapsedSeconds((current) => current + 1);
+      setNowMs(Date.now());
     }, 1000);
 
     return () => window.clearInterval(timerId);
-  }, []);
+  }, [startedAt]);
+
+  const elapsedSeconds = useMemo(() => {
+    if (!startedAt) {
+      return 0;
+    }
+
+    return Math.max(0, Math.floor((nowMs - startedAt) / 1000));
+  }, [nowMs, startedAt]);
 
   const duration = useMemo(() => formatDuration(elapsedSeconds), [elapsedSeconds]);
 

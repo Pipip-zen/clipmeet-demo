@@ -54,6 +54,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
   const [remoteParticipants, setRemoteParticipants] = useState([]);
   const [peerNames, setPeerNames] = useState({});
   const [serverRoomName, setServerRoomName] = useState(roomName);
+  const [startedAt, setStartedAt] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [error, setError] = useState('');
@@ -75,6 +76,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
   const localSocketIdRef = useRef('');
   const peerConnectionsRef = useRef({});
   const remoteStreamsRef = useRef({});
+  const pendingIceCandidatesRef = useRef({});
   const peerNamesRef = useRef({});
   const peerMediaStateRef = useRef({});
   const localMediaStateRef = useRef({ isMuted: false, isCameraOff: false });
@@ -92,16 +94,35 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     setPeerNames(peerNamesRef.current);
   }, []);
 
+  const resetRemotePeers = useCallback(() => {
+    Object.values(peerConnectionsRef.current).forEach((connection) => {
+      connection.onicecandidate = null;
+      connection.ontrack = null;
+      connection.onconnectionstatechange = null;
+      connection.close();
+    });
+
+    peerConnectionsRef.current = {};
+    remoteStreamsRef.current = {};
+    pendingIceCandidatesRef.current = {};
+    peerNamesRef.current = {};
+    peerMediaStateRef.current = {};
+    setPeerNames({});
+    setRemoteParticipants([]);
+  }, []);
+
   const removePeer = useCallback((peerId) => {
     const connection = peerConnectionsRef.current[peerId];
     if (connection) {
       connection.onicecandidate = null;
       connection.ontrack = null;
+      connection.onconnectionstatechange = null;
       connection.close();
       delete peerConnectionsRef.current[peerId];
     }
 
     delete remoteStreamsRef.current[peerId];
+    delete pendingIceCandidatesRef.current[peerId];
     delete peerNamesRef.current[peerId];
     delete peerMediaStateRef.current[peerId];
     setPeerNames({ ...peerNamesRef.current });
@@ -153,6 +174,23 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     await Promise.all(replacements);
   }, []);
 
+  const flushPendingIceCandidates = useCallback(async (peerId, connection) => {
+    const queuedCandidates = pendingIceCandidatesRef.current[peerId];
+    if (!queuedCandidates?.length || !connection.remoteDescription) {
+      return;
+    }
+
+    delete pendingIceCandidatesRef.current[peerId];
+
+    for (const candidate of queuedCandidates) {
+      try {
+        await connection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (iceError) {
+        console.error('Failed to flush ICE candidate:', iceError);
+      }
+    }
+  }, []);
+
   const createPeerConnection = useCallback((peerId, peerName = '') => {
     const existingConnection = peerConnectionsRef.current[peerId];
     if (existingConnection) {
@@ -182,12 +220,15 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     };
 
     connection.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (!stream) {
-        return;
+      const inboundTrack = event.track;
+      const stream = remoteStreamsRef.current[peerId] || new MediaStream();
+
+      if (inboundTrack && !stream.getTracks().some((track) => track.id === inboundTrack.id)) {
+        stream.addTrack(inboundTrack);
       }
 
       remoteStreamsRef.current[peerId] = stream;
+
       setRemoteParticipants((current) => {
         const currentMediaState = peerMediaStateRef.current[peerId] || {};
         const nextParticipant = {
@@ -214,7 +255,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     };
 
     connection.onconnectionstatechange = () => {
-      if (['failed', 'closed', 'disconnected'].includes(connection.connectionState)) {
+      if (['failed', 'closed'].includes(connection.connectionState)) {
         removePeer(peerId);
       }
     };
@@ -223,20 +264,26 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     return connection;
   }, [removePeer]);
 
+  const buildAndSendOffer = useCallback(async (peerId, peerName = '') => {
+    const connection = createPeerConnection(peerId, peerName);
+    const offer = await connection.createOffer();
+    await connection.setLocalDescription(offer);
+
+    socketRef.current?.emit('offer', {
+      target: peerId,
+      participantName,
+      mediaState: localMediaStateRef.current,
+      offer,
+    });
+  }, [createPeerConnection, participantName]);
+
   const cleanup = useCallback(() => {
     if (hasLeftRef.current) {
       return;
     }
 
     hasLeftRef.current = true;
-
-    Object.values(peerConnectionsRef.current).forEach((connection) => {
-      connection.onicecandidate = null;
-      connection.ontrack = null;
-      connection.close();
-    });
-    peerConnectionsRef.current = {};
-    remoteStreamsRef.current = {};
+    resetRemotePeers();
 
     screenStreamRef.current?.getTracks().forEach((track) => track.stop());
     screenStreamRef.current = null;
@@ -251,9 +298,8 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       socketRef.current = null;
     }
 
-    setRemoteParticipants([]);
     setLocalStream(null);
-  }, []);
+  }, [resetRemotePeers]);
 
   const stopScreenShare = useCallback(async () => {
     const cameraTrack = cameraVideoTrackRef.current;
@@ -337,7 +383,6 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       try {
         hasLeftRef.current = false;
         const prejoinPreferences = readPrejoinPreferences();
-
         const stream = await navigator.mediaDevices.getUserMedia(MEDIA_CONSTRAINTS);
 
         const shouldEnableMic = prejoinPreferences.isMicOn !== false;
@@ -364,19 +409,34 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
         setLocalStream(stream);
         setIsMuted(!shouldEnableMic);
         setIsCameraOff(!shouldEnableCamera);
+        setError('');
 
         const socket = io(SIGNALING_SERVER_URL, {
           transports: ['websocket'],
+          reconnection: true,
         });
         socketRef.current = socket;
 
-        socket.on('connect', () => {
-          localSocketIdRef.current = socket.id;
+        const joinRoom = () => {
           socket.emit('join-room', {
             roomCode: normalizedRoomCode,
             participantName,
             roomName,
             ...localMediaStateRef.current,
+          });
+        };
+
+        socket.on('connect', () => {
+          const previousSocketId = localSocketIdRef.current;
+          localSocketIdRef.current = socket.id;
+
+          if (previousSocketId && previousSocketId !== socket.id) {
+            resetRemotePeers();
+          }
+
+          joinRoom();
+          socket.emit('get-room-state', {
+            roomCode: normalizedRoomCode,
           });
         });
 
@@ -384,6 +444,25 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
           if (roomInfo.roomCode === normalizedRoomCode && roomInfo.roomName) {
             setServerRoomName(roomInfo.roomName);
           }
+        });
+
+        socket.on('room-state', (roomState) => {
+          if (roomState.roomCode !== normalizedRoomCode) {
+            return;
+          }
+
+          setStartedAt(roomState.startedAt || null);
+          if (roomState.roomName) {
+            setServerRoomName(roomState.roomName);
+          }
+
+          roomState.participants
+            ?.map(normalizePeer)
+            .filter((peer) => peer.socketId !== localSocketIdRef.current)
+            .forEach((peer) => {
+              setPeerName(peer.socketId, peer.participantName);
+              setPeerMediaState(peer.socketId, peer.mediaState);
+            });
         });
 
         socket.on('room-join-error', ({ roomCode: failedRoomCode, message }) => {
@@ -395,28 +474,36 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
           socket.disconnect();
         });
 
-        socket.on('existing-peers', async (existingPeers) => {
-          for (const peer of existingPeers.map(normalizePeer)) {
+        socket.on('existing-peers', (existingPeers) => {
+          existingPeers.map(normalizePeer).forEach((peer) => {
             setPeerName(peer.socketId, peer.participantName);
             setPeerMediaState(peer.socketId, peer.mediaState);
-            const connection = createPeerConnection(peer.socketId, peer.participantName);
-            const offer = await connection.createOffer();
-            await connection.setLocalDescription(offer);
+          });
+        });
 
-            socket.emit('offer', {
-              target: peer.socketId,
-              participantName,
-              mediaState: localMediaStateRef.current,
-              offer,
-            });
+        socket.on('user-joined', async ({ socketId, participantName: peerName, mediaState }) => {
+          if (!socketId || socketId === localSocketIdRef.current) {
+            return;
+          }
+
+          setPeerName(socketId, peerName);
+          setPeerMediaState(socketId, mediaState);
+
+          try {
+            await buildAndSendOffer(socketId, peerName);
+          } catch (offerError) {
+            console.error('Failed to create offer for new peer:', offerError);
           }
         });
 
         socket.on('offer', async ({ caller, offer, participantName: peerName, mediaState }) => {
           setPeerName(caller, peerName);
           setPeerMediaState(caller, mediaState);
+
           const connection = createPeerConnection(caller, peerName);
           await connection.setRemoteDescription(new RTCSessionDescription(offer));
+          await flushPendingIceCandidates(caller, connection);
+
           const answer = await connection.createAnswer();
           await connection.setLocalDescription(answer);
 
@@ -428,19 +515,30 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
           });
         });
 
-        socket.on('answer', async ({ caller, answer, mediaState }) => {
+        socket.on('answer', async ({ caller, answer, participantName: peerName, mediaState }) => {
+          setPeerName(caller, peerName);
           setPeerMediaState(caller, mediaState);
+
           const connection = peerConnectionsRef.current[caller];
           if (!connection) {
             return;
           }
 
           await connection.setRemoteDescription(new RTCSessionDescription(answer));
+          await flushPendingIceCandidates(caller, connection);
         });
 
         socket.on('ice-candidate', async ({ caller, candidate }) => {
           const connection = peerConnectionsRef.current[caller];
-          if (!connection || !candidate) {
+          if (!candidate) {
+            return;
+          }
+
+          if (!connection || !connection.remoteDescription) {
+            pendingIceCandidatesRef.current[caller] = [
+              ...(pendingIceCandidatesRef.current[caller] || []),
+              candidate,
+            ];
             return;
           }
 
@@ -449,6 +547,10 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
           } catch (iceError) {
             console.error('Failed to add ICE candidate:', iceError);
           }
+        });
+
+        socket.on('user-left', (payload) => {
+          removePeer(typeof payload === 'string' ? payload : payload.socketId);
         });
 
         socket.on('peer-left', (payload) => {
@@ -524,7 +626,20 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
       localStorage.removeItem('clipmeet.prejoin');
       cleanup();
     };
-  }, [cleanup, createPeerConnection, normalizedRoomCode, participantName, removePeer, roomName, setPeerMediaState, setPeerName, startApprovedScreenShare]);
+  }, [
+    buildAndSendOffer,
+    cleanup,
+    createPeerConnection,
+    flushPendingIceCandidates,
+    normalizedRoomCode,
+    participantName,
+    removePeer,
+    resetRemotePeers,
+    roomName,
+    setPeerMediaState,
+    setPeerName,
+    startApprovedScreenShare,
+  ]);
 
   const toggleMute = useCallback(() => {
     const audioTracks = localStreamRef.current?.getAudioTracks() || [];
@@ -620,6 +735,7 @@ function useWebRTC(roomCode, participantName = 'Guest', roomName = roomCode) {
     participants,
     peerNames,
     roomName: serverRoomName,
+    startedAt,
     isMuted,
     isCameraOff,
     screenShare,
