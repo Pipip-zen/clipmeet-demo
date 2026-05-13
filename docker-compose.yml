@@ -9,9 +9,9 @@ services:
       CLIENT_ORIGIN: https://clipmeet.web.id
       JWT_SECRET: ZaMotO3TOIpmjeiYxO0noUUyqYnFqJOmQhaG5wg+l4U=
     volumes:
-      - ./server/uploads:/app/uploads
-      - ./server/clips:/app/clips
-      - ./server/db.sqlite:/app/db.sqlite
+      - ./server/uploads:/uploads
+      - ./server/clips:/clips
+      - ./server/db.sqlite:/db.sqlite
     ports:
       - "3001:3001"
 
