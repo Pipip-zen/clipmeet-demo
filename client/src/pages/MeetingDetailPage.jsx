@@ -42,6 +42,43 @@ function getMeetingTitle(meeting, storedRooms) {
   return meeting.title || `Meeting ${meeting.room_id}`;
 }
 
+function getClipStatusLabel(status) {
+  if (status === 'processing') {
+    return 'Processing';
+  }
+  if (status === 'failed') {
+    return 'Failed';
+  }
+  return 'Ready';
+}
+
+async function downloadAuthenticatedFile(url, fallbackName) {
+  const response = await authFetch(url);
+  if (!response.ok) {
+    let message = 'Failed to download file.';
+    try {
+      const body = await response.json();
+      message = body.error || message;
+    } catch {
+      // Ignore parse error and use fallback message.
+    }
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const header = response.headers.get('Content-Disposition') || '';
+  const match = header.match(/filename="?([^"]+)"?/i);
+  const filename = match?.[1] || fallbackName;
+  const objectUrl = window.URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
 function MeetingDetailPage() {
   const { meetingId } = useParams();
   const videoRef = useRef(null);
@@ -49,12 +86,18 @@ function MeetingDetailPage() {
   const [clips, setClips] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [downloadError, setDownloadError] = useState('');
+  const [actionState, setActionState] = useState({});
 
   useEffect(() => {
-    const fetchMeeting = async () => {
+    let isMounted = true;
+
+    const fetchMeeting = async ({ silent = false } = {}) => {
       try {
-        setIsLoading(true);
-        setError('');
+        if (!silent) {
+          setIsLoading(true);
+          setError('');
+        }
 
         const response = await authFetch(`${API_BASE_URL}/meetings/${meetingId}`);
         if (!response.ok) {
@@ -63,22 +106,64 @@ function MeetingDetailPage() {
         }
 
         const data = await response.json();
+        if (!isMounted) {
+          return;
+        }
+
         setMeeting(data);
         setClips(data.clips || []);
       } catch (fetchError) {
         console.error('Failed to load meeting:', fetchError);
-        setError(fetchError.message);
+        if (isMounted) {
+          setError(fetchError.message);
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted && !silent) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchMeeting();
+
+    return () => {
+      isMounted = false;
+    };
   }, [meetingId]);
+
+  useEffect(() => {
+    if (!clips.some((clip) => clip.status === 'processing')) {
+      return undefined;
+    }
+
+    const pollId = window.setInterval(async () => {
+      try {
+        const response = await authFetch(`${API_BASE_URL}/meetings/${meetingId}`);
+        if (!response.ok) {
+          return;
+        }
+
+        const data = await response.json();
+        setMeeting(data);
+        setClips(data.clips || []);
+      } catch {
+        // Keep existing UI state and try again on next tick.
+      }
+    }, 3000);
+
+    return () => window.clearInterval(pollId);
+  }, [clips, meetingId]);
 
   const recordingUrl = useMemo(() => toServerUrl(meeting?.file_path), [meeting]);
   const markers = useMemo(() => meeting?.markers || [], [meeting]);
   const storedRooms = readStoredRooms();
+
+  const setBusy = (key, isBusy) => {
+    setActionState((current) => ({
+      ...current,
+      [key]: isBusy,
+    }));
+  };
 
   const seekToMarker = (timestampSeconds) => {
     if (!videoRef.current || !recordingUrl) {
@@ -100,6 +185,90 @@ function MeetingDetailPage() {
     videoRef.current.play();
   };
 
+  const handleDownloadRecording = async () => {
+    if (!meeting) {
+      return;
+    }
+
+    try {
+      setDownloadError('');
+      setBusy('recording', true);
+      await downloadAuthenticatedFile(
+        `${API_BASE_URL}/recordings/${meeting.id}/download`,
+        `recording-room-${meeting.room_id}.webm`
+      );
+    } catch (downloadFileError) {
+      console.error('Failed to download recording:', downloadFileError);
+      setDownloadError(downloadFileError.message);
+    } finally {
+      setBusy('recording', false);
+    }
+  };
+
+  const handleDownloadAllClips = async () => {
+    if (!meeting) {
+      return;
+    }
+
+    try {
+      setDownloadError('');
+      setBusy('clips-zip', true);
+      await downloadAuthenticatedFile(
+        `${API_BASE_URL}/recordings/${meeting.id}/clips/download-zip`,
+        `clips-room-${meeting.room_id}.zip`
+      );
+    } catch (downloadZipError) {
+      console.error('Failed to download clip zip:', downloadZipError);
+      setDownloadError(downloadZipError.message);
+    } finally {
+      setBusy('clips-zip', false);
+    }
+  };
+
+  const handleDownloadClip = async (clip) => {
+    try {
+      setDownloadError('');
+      setBusy(`clip-download-${clip.id}`, true);
+      await downloadAuthenticatedFile(
+        `${API_BASE_URL}/clips/${clip.id}/download`,
+        `clip-${String(clip.sequence_number || 1).padStart(3, '0')}-room-${meeting?.room_id || 'ROOM'}.webm`
+      );
+    } catch (downloadClipError) {
+      console.error('Failed to download clip:', downloadClipError);
+      setDownloadError(downloadClipError.message);
+    } finally {
+      setBusy(`clip-download-${clip.id}`, false);
+    }
+  };
+
+  const handleRetryClip = async (clipId) => {
+    try {
+      setDownloadError('');
+      setBusy(`clip-retry-${clipId}`, true);
+
+      const response = await authFetch(`${API_BASE_URL}/clips/${clipId}/retry`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error(body.error || 'Failed to retry clip.');
+      }
+
+      const nextClip = await response.json();
+      setClips((current) =>
+        current.map((clip) => (clip.id === clipId ? nextClip : clip))
+      );
+    } catch (retryError) {
+      console.error('Failed to retry clip:', retryError);
+      setDownloadError(retryError.message);
+    } finally {
+      setBusy(`clip-retry-${clipId}`, false);
+    }
+  };
+
+  const hasReadyClips = clips.some((clip) => clip.status === 'ready' && clip.file_path);
+
   return (
     <main className="detail-page">
       <div className="detail-shell">
@@ -117,6 +286,7 @@ function MeetingDetailPage() {
 
         {isLoading ? <p className="detail-empty">Memuat meeting...</p> : null}
         {error ? <p className="detail-error">{error}</p> : null}
+        {downloadError ? <p className="detail-error">{downloadError}</p> : null}
 
         {meeting ? (
           <div className="detail-layout">
@@ -127,6 +297,16 @@ function MeetingDetailPage() {
                 src={recordingUrl}
                 controls
               />
+              <div className="detail-actions">
+                <button
+                  type="button"
+                  className="detail-button detail-button--primary"
+                  onClick={handleDownloadRecording}
+                  disabled={!meeting.file_path || Boolean(actionState.recording)}
+                >
+                  {actionState.recording ? 'Downloading...' : 'Download Full Recording'}
+                </button>
+              </div>
             </section>
 
             <aside className="detail-panel">
@@ -158,29 +338,85 @@ function MeetingDetailPage() {
               <ClipCreator
                 meetingId={meeting.id}
                 markers={markers}
-                onClipCreated={(clip) => setClips((current) => [...current, clip])}
+                onClipCreated={(clip) =>
+                  setClips((current) =>
+                    [...current, clip].sort((left, right) => {
+                      if ((left.sequence_number || 0) !== (right.sequence_number || 0)) {
+                        return (left.sequence_number || 0) - (right.sequence_number || 0);
+                      }
+                      return left.start_time - right.start_time;
+                    })
+                  )
+                }
               />
             </section>
 
             <section className="detail-panel">
-              <h2 className="detail-panel__title">Clips</h2>
+              <div className="detail-panel__header">
+                <h2 className="detail-panel__title">Clips</h2>
+                <button
+                  type="button"
+                  className="detail-button"
+                  onClick={handleDownloadAllClips}
+                  disabled={!hasReadyClips || Boolean(actionState['clips-zip'])}
+                >
+                  {actionState['clips-zip'] ? 'Downloading...' : 'Download All Clips (.zip)'}
+                </button>
+              </div>
               {clips.length === 0 ? <p className="detail-empty">Belum ada clip</p> : null}
               <ul className="clip-list">
                 {clips.map((clip) => (
                   <li className="clip-item" key={clip.id}>
-                    <div>
-                      <div className="clip-item__label">{clip.label}</div>
+                    <div className="clip-item__meta">
+                      <div className="clip-item__topline">
+                        <div className="clip-item__label">{clip.label}</div>
+                        <span className={`clip-status clip-status--${clip.status || 'ready'}`}>
+                          {getClipStatusLabel(clip.status)}
+                        </span>
+                      </div>
                       <div className="clip-item__time">
                         {formatTimestamp(clip.start_time)} - {formatTimestamp(clip.end_time)}
                       </div>
+                      {clip.error_message ? (
+                        <div className="clip-item__error">{clip.error_message}</div>
+                      ) : null}
                     </div>
-                    <button
-                      type="button"
-                      className="detail-button"
-                      onClick={() => playClip(clip)}
-                    >
-                      Play
-                    </button>
+                    <div className="clip-item__actions">
+                      <button
+                        type="button"
+                        className="detail-button"
+                        onClick={() => playClip(clip)}
+                        disabled={!clip.file_path}
+                      >
+                        Preview Clip
+                      </button>
+                      <button
+                        type="button"
+                        className="detail-button"
+                        onClick={() => handleDownloadClip(clip)}
+                        disabled={
+                          clip.status !== 'ready' ||
+                          !clip.file_path ||
+                          Boolean(actionState[`clip-download-${clip.id}`])
+                        }
+                      >
+                        {clip.status === 'processing'
+                          ? 'Processing'
+                          : actionState[`clip-download-${clip.id}`]
+                            ? 'Downloading...'
+                            : 'Download Clip'}
+                      </button>
+                      {clip.status === 'failed' ? (
+                        <button
+                          type="button"
+                          className="detail-button"
+                          onClick={() => handleRetryClip(clip.id)}
+                          disabled={Boolean(actionState[`clip-retry-${clip.id}`])}
+                        >
+                          {actionState[`clip-retry-${clip.id}`] ? 'Retrying...' : 'Retry'}
+                        </button>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
               </ul>

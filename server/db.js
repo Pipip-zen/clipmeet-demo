@@ -7,7 +7,6 @@ const db = new Database(dbPath);
 
 db.pragma('foreign_keys = ON');
 
-// Initialize database schema
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -42,6 +41,9 @@ db.exec(`
     start_time REAL,
     end_time REAL,
     file_path TEXT,
+    status TEXT DEFAULT 'ready',
+    error_message TEXT,
+    sequence_number INTEGER,
     FOREIGN KEY (meeting_id) REFERENCES meetings(id)
   );
 `);
@@ -51,7 +53,36 @@ if (!meetingColumns.some((column) => column.name === 'user_id')) {
   db.prepare('ALTER TABLE meetings ADD COLUMN user_id TEXT REFERENCES users(id)').run();
 }
 
-// Helper functions for Database Queries
+const clipColumns = db.prepare('PRAGMA table_info(clips)').all();
+if (!clipColumns.some((column) => column.name === 'status')) {
+  db.prepare("ALTER TABLE clips ADD COLUMN status TEXT DEFAULT 'ready'").run();
+}
+if (!clipColumns.some((column) => column.name === 'error_message')) {
+  db.prepare('ALTER TABLE clips ADD COLUMN error_message TEXT').run();
+}
+if (!clipColumns.some((column) => column.name === 'sequence_number')) {
+  db.prepare('ALTER TABLE clips ADD COLUMN sequence_number INTEGER').run();
+}
+
+db.prepare(`
+  UPDATE clips
+  SET status = 'ready'
+  WHERE status IS NULL OR status = ''
+`).run();
+
+db.prepare(`
+  UPDATE clips
+  SET sequence_number = (
+    SELECT COUNT(*)
+    FROM clips AS ranked
+    WHERE ranked.meeting_id = clips.meeting_id
+      AND (
+        ranked.start_time < clips.start_time
+        OR (ranked.start_time = clips.start_time AND ranked.id <= clips.id)
+      )
+  )
+  WHERE sequence_number IS NULL
+`).run();
 
 const createUser = (username, passwordHash) => {
   const id = uuidv4();
@@ -111,23 +142,115 @@ const getMeetingById = (id, userId) => {
   const meeting = userId
     ? db.prepare('SELECT * FROM meetings WHERE id = ? AND user_id = ?').get(id, userId)
     : db.prepare('SELECT * FROM meetings WHERE id = ?').get(id);
-  if (!meeting) return null;
-  
+  if (!meeting) {
+    return null;
+  }
+
   meeting.markers = db.prepare('SELECT * FROM markers WHERE meeting_id = ? ORDER BY timestamp_seconds ASC').all(id);
-  meeting.clips = db.prepare('SELECT * FROM clips WHERE meeting_id = ? ORDER BY start_time ASC').all(id);
-  
+  meeting.clips = db.prepare('SELECT * FROM clips WHERE meeting_id = ? ORDER BY sequence_number ASC, start_time ASC').all(id);
+
   return meeting;
 };
 
-const createClip = (meetingId, label, startTime, endTime, filePath) => {
+const getNextClipSequenceNumber = (meetingId) => {
+  const result = db
+    .prepare('SELECT COALESCE(MAX(sequence_number), 0) AS maxSequence FROM clips WHERE meeting_id = ?')
+    .get(meetingId);
+  return (result?.maxSequence || 0) + 1;
+};
+
+const createClip = (meetingId, label, startTime, endTime, options = {}) => {
   const id = uuidv4();
-  const stmt = db.prepare('INSERT INTO clips (id, meeting_id, label, start_time, end_time, file_path) VALUES (?, ?, ?, ?, ?, ?)');
-  stmt.run(id, meetingId, label, startTime, endTime, filePath);
+  const sequenceNumber = options.sequenceNumber || getNextClipSequenceNumber(meetingId);
+  const stmt = db.prepare(`
+    INSERT INTO clips (
+      id,
+      meeting_id,
+      label,
+      start_time,
+      end_time,
+      file_path,
+      status,
+      error_message,
+      sequence_number
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(
+    id,
+    meetingId,
+    label,
+    startTime,
+    endTime,
+    options.filePath || null,
+    options.status || 'ready',
+    options.errorMessage || null,
+    sequenceNumber
+  );
+  return getClipById(id);
+};
+
+const updateClip = (id, updates = {}) => {
+  const assignments = [];
+  const values = [];
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'label')) {
+    assignments.push('label = ?');
+    values.push(updates.label);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'startTime')) {
+    assignments.push('start_time = ?');
+    values.push(updates.startTime);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'endTime')) {
+    assignments.push('end_time = ?');
+    values.push(updates.endTime);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'filePath')) {
+    assignments.push('file_path = ?');
+    values.push(updates.filePath);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'status')) {
+    assignments.push('status = ?');
+    values.push(updates.status);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'errorMessage')) {
+    assignments.push('error_message = ?');
+    values.push(updates.errorMessage);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'sequenceNumber')) {
+    assignments.push('sequence_number = ?');
+    values.push(updates.sequenceNumber);
+  }
+
+  if (assignments.length === 0) {
+    return getClipById(id);
+  }
+
+  values.push(id);
+  db.prepare(`UPDATE clips SET ${assignments.join(', ')} WHERE id = ?`).run(...values);
   return getClipById(id);
 };
 
 const getClipById = (id) => {
   return db.prepare('SELECT * FROM clips WHERE id = ?').get(id);
+};
+
+const getClipByIdForUser = (id, userId) => {
+  return db.prepare(`
+    SELECT clips.*, meetings.room_id, meetings.user_id
+    FROM clips
+    INNER JOIN meetings ON meetings.id = clips.meeting_id
+    WHERE clips.id = ? AND meetings.user_id = ?
+  `).get(id, userId);
+};
+
+const getClipsByMeetingId = (meetingId) => {
+  return db.prepare(`
+    SELECT *
+    FROM clips
+    WHERE meeting_id = ?
+    ORDER BY sequence_number ASC, start_time ASC
+  `).all(meetingId);
 };
 
 module.exports = {
@@ -142,5 +265,9 @@ module.exports = {
   getAllMeetings,
   getMeetingById,
   createClip,
-  getClipById
+  updateClip,
+  getClipById,
+  getClipByIdForUser,
+  getClipsByMeetingId,
+  getNextClipSequenceNumber,
 };
