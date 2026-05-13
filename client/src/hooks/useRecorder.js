@@ -2,22 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatDuration, getMeetingLayout } from '@/lib/meetingLayout';
 
 const API_BASE_URL = 'http://localhost:3001/api';
+const PREFERRED_MIME_TYPE = 'video/webm;codecs=vp8,opus';
 const RECORDING_WIDTH = 1920;
 const RECORDING_HEIGHT = 1080;
 const HEADER_HEIGHT = 132;
-const FOOTER_HEIGHT = 112;
-const SURFACE_PADDING = 28;
-const GRID_GAP = 18;
-const HEADER_INNER_PADDING = 24;
+const FOOTER_HEIGHT = 96;
+const PADDING = 28;
+const GAP = 18;
 
-function getSupportedMimeType() {
-  const preferredTypes = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm',
-  ];
+function getRecorderOptions() {
+  if (MediaRecorder.isTypeSupported(PREFERRED_MIME_TYPE)) {
+    return { mimeType: PREFERRED_MIME_TYPE };
+  }
 
-  return preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+  return undefined;
 }
 
 async function assertOk(response, fallbackMessage) {
@@ -50,21 +48,48 @@ function roundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function getPillWidth(ctx, label, value, showDot = false) {
-  ctx.font = '500 24px Arial';
-  const labelWidth = ctx.measureText(label).width;
-  ctx.font = '700 28px Arial';
-  const valueWidth = ctx.measureText(String(value)).width;
-  const dotWidth = showDot ? 26 : 0;
+function fitText(ctx, text, maxWidth, baseSize, weight = 700) {
+  let size = baseSize;
+  while (size > 22) {
+    ctx.font = `${weight} ${size}px Arial`;
+    if (ctx.measureText(text).width <= maxWidth) {
+      return size;
+    }
+    size -= 2;
+  }
 
-  return Math.ceil(36 + dotWidth + labelWidth + 16 + valueWidth + 24);
+  return size;
 }
 
-function drawPill(ctx, x, y, width, height, label, value, showDot = false) {
+function drawVideoCover(ctx, video, x, y, width, height) {
+  const sourceWidth = video.videoWidth || width;
+  const sourceHeight = video.videoHeight || height;
+  const scale = Math.max(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+
+  ctx.drawImage(
+    video,
+    x + (width - drawWidth) / 2,
+    y + (height - drawHeight) / 2,
+    drawWidth,
+    drawHeight
+  );
+}
+
+function drawPill(ctx, x, y, label, value, showDot = false) {
+  ctx.font = '500 22px Arial';
+  const labelWidth = ctx.measureText(label).width;
+  ctx.font = '700 26px Arial';
+  const valueWidth = ctx.measureText(String(value)).width;
+  const dotWidth = showDot ? 24 : 0;
+  const width = 36 + dotWidth + labelWidth + 14 + valueWidth + 22;
+  const height = 50;
+
   roundedRect(ctx, x, y, width, height, height / 2);
   ctx.fillStyle = 'rgba(30, 41, 59, 0.92)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.24)';
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -76,45 +101,21 @@ function drawPill(ctx, x, y, width, height, label, value, showDot = false) {
     ctx.arc(cursorX + 7, y + height / 2, 7, 0, Math.PI * 2);
     ctx.fillStyle = '#ef4444';
     ctx.fill();
-    cursorX += 26;
+    cursorX += 24;
   }
 
   ctx.fillStyle = '#cbd5e1';
-  ctx.font = '500 24px Arial';
+  ctx.font = '500 22px Arial';
   ctx.fillText(label, cursorX, y + height / 2);
 
-  const labelWidth = ctx.measureText(label).width;
   ctx.fillStyle = '#f8fafc';
-  ctx.font = '700 28px Arial';
-  ctx.fillText(String(value), cursorX + labelWidth + 16, y + height / 2);
+  ctx.font = '700 26px Arial';
+  ctx.fillText(String(value), cursorX + labelWidth + 14, y + height / 2);
+
+  return width;
 }
 
-function drawVideoCover(ctx, video, x, y, width, height) {
-  const sourceWidth = video.videoWidth || width;
-  const sourceHeight = video.videoHeight || height;
-  const scale = Math.max(width / sourceWidth, height / sourceHeight);
-  const drawWidth = sourceWidth * scale;
-  const drawHeight = sourceHeight * scale;
-  const offsetX = x + (width - drawWidth) / 2;
-  const offsetY = y + (height - drawHeight) / 2;
-
-  ctx.drawImage(video, offsetX, offsetY, drawWidth, drawHeight);
-}
-
-function fitText(ctx, text, maxWidth, baseSize, weight = 700) {
-  let fontSize = baseSize;
-  while (fontSize > 24) {
-    ctx.font = `${weight} ${fontSize}px Arial`;
-    if (ctx.measureText(text).width <= maxWidth) {
-      return fontSize;
-    }
-    fontSize -= 2;
-  }
-
-  return fontSize;
-}
-
-function createSceneRecorder({ getParticipants, getRoomName, getDurationText }) {
+function createMixedRecorder({ getParticipants, getRoomName, getDurationText }) {
   const canvas = document.createElement('canvas');
   canvas.width = RECORDING_WIDTH;
   canvas.height = RECORDING_HEIGHT;
@@ -122,21 +123,20 @@ function createSceneRecorder({ getParticipants, getRoomName, getDurationText }) 
   const ctx = canvas.getContext('2d');
   const audioContext = new AudioContext();
   const destination = audioContext.createMediaStreamDestination();
-  const videos = new Map();
-  const audioNodes = new Map();
-  let frameId = null;
+  const videoElements = new Map();
+  const audioSources = new Map();
+  let animationFrameId = null;
 
   const syncParticipants = async () => {
     const participants = getParticipants();
-    const ids = new Set(participants.map((participant) => participant.id));
+    const activeIds = new Set(participants.map((participant) => participant.id));
 
     for (const participant of participants) {
-      const previous = videos.get(participant.id);
-
-      if (!previous || previous.stream !== participant.stream) {
-        if (previous) {
-          previous.video.pause();
-          videos.delete(participant.id);
+      const existingVideo = videoElements.get(participant.id);
+      if (!existingVideo || existingVideo.stream !== participant.stream) {
+        if (existingVideo) {
+          existingVideo.video.pause();
+          existingVideo.video.srcObject = null;
         }
 
         if (participant.stream) {
@@ -146,52 +146,48 @@ function createSceneRecorder({ getParticipants, getRoomName, getDurationText }) 
           video.muted = true;
           video.playsInline = true;
           await video.play().catch(() => {});
-          videos.set(participant.id, { video, stream: participant.stream });
+          videoElements.set(participant.id, { video, stream: participant.stream });
         }
       }
 
-      const hasAudio = participant.stream?.getAudioTracks()?.length > 0;
-      if (hasAudio && !audioNodes.has(participant.id)) {
+      const existingAudio = audioSources.get(participant.id);
+      const hasAudio = participant.stream?.getAudioTracks().length > 0;
+      if ((!existingAudio || existingAudio.stream !== participant.stream) && hasAudio) {
+        if (existingAudio) {
+          existingAudio.source.disconnect();
+        }
+
         const source = audioContext.createMediaStreamSource(participant.stream);
         source.connect(destination);
-        audioNodes.set(participant.id, source);
-      } else if (!hasAudio && audioNodes.has(participant.id)) {
-        audioNodes.get(participant.id)?.disconnect();
-        audioNodes.delete(participant.id);
+        audioSources.set(participant.id, { source, stream: participant.stream });
       }
     }
 
-    for (const [participantId, entry] of videos.entries()) {
-      if (!ids.has(participantId)) {
+    for (const [participantId, entry] of videoElements.entries()) {
+      if (!activeIds.has(participantId)) {
         entry.video.pause();
-        videos.delete(participantId);
+        entry.video.srcObject = null;
+        videoElements.delete(participantId);
       }
     }
 
-    for (const [participantId, source] of audioNodes.entries()) {
-      if (!ids.has(participantId)) {
-        source.disconnect();
-        audioNodes.delete(participantId);
+    for (const [participantId, entry] of audioSources.entries()) {
+      if (!activeIds.has(participantId)) {
+        entry.source.disconnect();
+        audioSources.delete(participantId);
       }
     }
   };
 
   const drawFrame = () => {
     const participants = getParticipants();
-    const durationText = getDurationText();
-    const roomName = getRoomName();
     const layout = getMeetingLayout(participants.length || 1);
-
-    const gridTop = HEADER_HEIGHT + SURFACE_PADDING;
-    const gridBottom = RECORDING_HEIGHT - FOOTER_HEIGHT - SURFACE_PADDING;
-    const gridHeight = gridBottom - gridTop;
-    const availableWidth = RECORDING_WIDTH - SURFACE_PADDING * 2;
-    const tileWidth =
-      (availableWidth - (layout.columns - 1) * GRID_GAP) / layout.columns;
-    const tileHeight =
-      (gridHeight - (layout.rows - 1) * GRID_GAP) / layout.rows;
-
-    ctx.clearRect(0, 0, RECORDING_WIDTH, RECORDING_HEIGHT);
+    const gridTop = HEADER_HEIGHT + PADDING;
+    const gridBottom = RECORDING_HEIGHT - FOOTER_HEIGHT - PADDING;
+    const availableWidth = RECORDING_WIDTH - PADDING * 2;
+    const availableHeight = gridBottom - gridTop;
+    const tileWidth = (availableWidth - (layout.columns - 1) * GAP) / layout.columns;
+    const tileHeight = (availableHeight - (layout.rows - 1) * GAP) / layout.rows;
 
     const gradient = ctx.createLinearGradient(0, 0, 0, RECORDING_HEIGHT);
     gradient.addColorStop(0, '#111827');
@@ -199,143 +195,121 @@ function createSceneRecorder({ getParticipants, getRoomName, getDurationText }) 
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, RECORDING_WIDTH, RECORDING_HEIGHT);
 
-    const glow = ctx.createRadialGradient(520, 80, 0, 520, 80, 640);
-    glow.addColorStop(0, 'rgba(88, 103, 221, 0.28)');
-    glow.addColorStop(1, 'rgba(88, 103, 221, 0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, RECORDING_WIDTH, RECORDING_HEIGHT);
-
     roundedRect(ctx, 24, 24, RECORDING_WIDTH - 48, HEADER_HEIGHT - 26, 24);
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.2)';
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)';
     ctx.lineWidth = 2;
     ctx.stroke();
 
+    const durationText = getDurationText();
+    const durationWidth = drawPill(ctx, RECORDING_WIDTH - 272, 54, 'Duration', durationText, true);
+    const participantsWidth = drawPill(
+      ctx,
+      RECORDING_WIDTH - 288 - durationWidth - 16,
+      54,
+      'Participants',
+      participants.length
+    );
+    const titleMaxWidth = RECORDING_WIDTH - 96 - durationWidth - participantsWidth - 72;
+
+    ctx.textBaseline = 'top';
     ctx.fillStyle = '#94a3b8';
     ctx.font = '700 18px Arial';
-    ctx.textBaseline = 'top';
     ctx.fillText('LIVE MEETING', 48, 48);
-
-    const participantsPillWidth = getPillWidth(ctx, 'Participants', participants.length);
-    const durationPillWidth = getPillWidth(ctx, 'Duration', durationText, true);
-    const pillsWidth = participantsPillWidth + durationPillWidth + 16;
-    const headerRightEdge = RECORDING_WIDTH - 48;
-    const durationPillX = headerRightEdge - durationPillWidth;
-    const participantsPillX = durationPillX - 16 - participantsPillWidth;
-    const titleMaxWidth =
-      participantsPillX - 32 - (48 + HEADER_INNER_PADDING);
-
     ctx.fillStyle = '#f8fafc';
-    const titleSize = fitText(ctx, roomName, titleMaxWidth, 58, 700);
+    const titleSize = fitText(ctx, getRoomName(), titleMaxWidth, 54, 700);
     ctx.font = `700 ${titleSize}px Arial`;
-    ctx.fillText(roomName, 48, 82);
-
-    drawPill(ctx, participantsPillX, 54, participantsPillWidth, 52, 'Participants', participants.length);
-    drawPill(ctx, durationPillX, 54, durationPillWidth, 52, 'Duration', durationText, true);
+    ctx.fillText(getRoomName(), 48, 82);
 
     participants.forEach((participant, index) => {
       const row = Math.floor(index / layout.columns);
       const column = index % layout.columns;
-      const tileX = SURFACE_PADDING + column * (tileWidth + GRID_GAP);
-      const tileY = gridTop + row * (tileHeight + GRID_GAP);
+      const x = PADDING + column * (tileWidth + GAP);
+      const y = gridTop + row * (tileHeight + GAP);
       const footerHeight = 68;
       const bodyHeight = tileHeight - footerHeight;
 
-      roundedRect(ctx, tileX, tileY, tileWidth, tileHeight, 28);
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
+      roundedRect(ctx, x, y, tileWidth, tileHeight, 28);
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
       ctx.fill();
       ctx.strokeStyle = participant.isLocal
         ? 'rgba(96, 165, 250, 0.5)'
-        : 'rgba(148, 163, 184, 0.18)';
+        : 'rgba(148, 163, 184, 0.2)';
       ctx.lineWidth = 2;
       ctx.stroke();
 
       ctx.save();
-      roundedRect(ctx, tileX, tileY, tileWidth, tileHeight, 28);
+      roundedRect(ctx, x, y, tileWidth, tileHeight, 28);
       ctx.clip();
 
-      const videoEntry = videos.get(participant.id);
+      const videoEntry = videoElements.get(participant.id);
       const canDrawVideo =
         videoEntry &&
         !participant.isCameraOff &&
         videoEntry.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
 
       if (canDrawVideo) {
-        drawVideoCover(ctx, videoEntry.video, tileX, tileY, tileWidth, bodyHeight);
+        drawVideoCover(ctx, videoEntry.video, x, y, tileWidth, bodyHeight);
       } else {
-        const tileGradient = ctx.createLinearGradient(tileX, tileY, tileX + tileWidth, tileY + bodyHeight);
+        const tileGradient = ctx.createLinearGradient(x, y, x + tileWidth, y + bodyHeight);
         tileGradient.addColorStop(0, 'rgba(59, 130, 246, 0.28)');
         tileGradient.addColorStop(1, 'rgba(34, 211, 238, 0.18)');
         ctx.fillStyle = tileGradient;
-        ctx.fillRect(tileX, tileY, tileWidth, bodyHeight);
-
+        ctx.fillRect(x, y, tileWidth, bodyHeight);
         ctx.fillStyle = '#e2e8f0';
         ctx.font = '700 84px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(
           (participant.name || 'G').charAt(0).toUpperCase(),
-          tileX + tileWidth / 2,
-          tileY + bodyHeight / 2
+          x + tileWidth / 2,
+          y + bodyHeight / 2
         );
         ctx.textAlign = 'left';
-        ctx.textBaseline = 'alphabetic';
       }
 
       ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-      ctx.fillRect(tileX, tileY, tileWidth, 44);
+      ctx.fillRect(x, y, tileWidth, 44);
       ctx.fillStyle = '#cbd5e1';
       ctx.font = '500 20px Arial';
       ctx.textBaseline = 'middle';
-      ctx.fillText(
-        participant.isCameraOff ? 'Camera off' : 'Camera on',
-        tileX + 20,
-        tileY + 22
-      );
-      const rightStatus = participant.isMuted ? 'Muted' : 'Mic on';
-      const rightStatusWidth = ctx.measureText(rightStatus).width;
-      ctx.fillText(
-        rightStatus,
-        tileX + tileWidth - rightStatusWidth - 20,
-        tileY + 22
-      );
+      ctx.fillText(participant.isCameraOff ? 'Camera off' : 'Camera on', x + 20, y + 22);
+      const micStatus = participant.isMuted ? 'Muted' : 'Mic on';
+      ctx.fillText(micStatus, x + tileWidth - ctx.measureText(micStatus).width - 20, y + 22);
 
       ctx.fillStyle = 'rgba(15, 23, 42, 0.96)';
-      ctx.fillRect(tileX, tileY + bodyHeight, tileWidth, footerHeight);
+      ctx.fillRect(x, y + bodyHeight, tileWidth, footerHeight);
       ctx.fillStyle = '#f8fafc';
       const nameSize = fitText(ctx, participant.name, tileWidth - 120, 30, 700);
-      ctx.textBaseline = 'alphabetic';
       ctx.font = `700 ${nameSize}px Arial`;
-      ctx.fillText(participant.name, tileX + 20, tileY + bodyHeight + 42);
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(participant.name, x + 20, y + bodyHeight + 42);
 
       if (participant.isLocal) {
-        const badgeWidth = 60;
-        roundedRect(ctx, tileX + tileWidth - badgeWidth - 20, tileY + bodyHeight + 14, badgeWidth, 36, 18);
+        roundedRect(ctx, x + tileWidth - 80, y + bodyHeight + 14, 60, 36, 18);
         ctx.fillStyle = 'rgba(30, 64, 175, 0.42)';
         ctx.fill();
         ctx.fillStyle = '#bfdbfe';
         ctx.font = '600 18px Arial';
         ctx.textBaseline = 'middle';
-        const badgeTextWidth = ctx.measureText('You').width;
-        ctx.fillText('You', tileX + tileWidth - 20 - badgeWidth / 2 - badgeTextWidth / 2, tileY + bodyHeight + 32);
+        ctx.fillText('You', x + tileWidth - 60, y + bodyHeight + 32);
       }
 
       ctx.restore();
     });
 
-    roundedRect(ctx, 24, RECORDING_HEIGHT - FOOTER_HEIGHT, RECORDING_WIDTH - 48, 84, 24);
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    roundedRect(ctx, 24, RECORDING_HEIGHT - FOOTER_HEIGHT, RECORDING_WIDTH - 48, 72, 24);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.2)';
-    ctx.lineWidth = 2;
     ctx.stroke();
-
     ctx.fillStyle = '#94a3b8';
     ctx.font = '600 22px Arial';
-    ctx.fillText('Recording full meeting stage', 56, RECORDING_HEIGHT - 66);
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Recording full meeting stage', 56, RECORDING_HEIGHT - FOOTER_HEIGHT + 36);
 
-    frameId = requestAnimationFrame(drawFrame);
+    animationFrameId = requestAnimationFrame(drawFrame);
   };
 
   const start = async () => {
@@ -345,21 +319,21 @@ function createSceneRecorder({ getParticipants, getRoomName, getDurationText }) 
   };
 
   const stop = async () => {
-    if (frameId) {
-      cancelAnimationFrame(frameId);
-      frameId = null;
+    if (animationFrameId) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
     }
 
-    for (const entry of videos.values()) {
+    for (const entry of videoElements.values()) {
       entry.video.pause();
       entry.video.srcObject = null;
     }
-    videos.clear();
+    videoElements.clear();
 
-    for (const source of audioNodes.values()) {
-      source.disconnect();
+    for (const entry of audioSources.values()) {
+      entry.source.disconnect();
     }
-    audioNodes.clear();
+    audioSources.clear();
 
     if (audioContext.state !== 'closed') {
       await audioContext.close();
@@ -367,13 +341,15 @@ function createSceneRecorder({ getParticipants, getRoomName, getDurationText }) 
   };
 
   const stream = canvas.captureStream(30);
-  destination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
+  destination.stream.getAudioTracks().forEach((track) => {
+    stream.addTrack(track);
+  });
 
   return {
     stream,
-    syncParticipants,
     start,
     stop,
+    syncParticipants,
   };
 }
 
@@ -389,15 +365,13 @@ function useRecorder(participants, roomId, meetingTitle = '') {
   const chunksRef = useRef([]);
   const meetingIdRef = useRef(null);
   const recordingStartTimeRef = useRef(null);
-  const sceneRecorderRef = useRef(null);
+  const mixedRecorderRef = useRef(null);
 
   useEffect(() => {
     participantsRef.current = participants;
-    if (sceneRecorderRef.current) {
-      sceneRecorderRef.current.syncParticipants().catch((syncError) => {
-        console.error('Failed to sync recorder participants:', syncError);
-      });
-    }
+    mixedRecorderRef.current?.syncParticipants().catch((syncError) => {
+      console.error('Failed to sync recording participants:', syncError);
+    });
   }, [participants]);
 
   const createMeeting = useCallback(async () => {
@@ -446,32 +420,33 @@ function useRecorder(participants, roomId, meetingTitle = '') {
 
     try {
       setError('');
+
       const meeting = await createMeeting();
-      const sceneRecorder = createSceneRecorder({
+      const mixedRecorder = createMixedRecorder({
         getParticipants: () => participantsRef.current,
         getRoomName: () => meetingTitle || roomId,
         getDurationText: () => {
-          const startedAt = recordingStartTimeRef.current;
-          if (!startedAt) {
+          if (!recordingStartTimeRef.current) {
             return '00:00:00';
           }
 
-          const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-          return formatDuration(elapsedSeconds);
+          return formatDuration(Math.floor((Date.now() - recordingStartTimeRef.current) / 1000));
         },
       });
-      const mimeType = getSupportedMimeType();
-      const recorder = new MediaRecorder(
-        sceneRecorder.stream,
-        mimeType ? { mimeType } : undefined
-      );
+      const recorderOptions = getRecorderOptions();
+      const recorder = recorderOptions
+        ? new MediaRecorder(mixedRecorder.stream, recorderOptions)
+        : new MediaRecorder(mixedRecorder.stream);
       const startTime = Date.now();
+
+      console.log('Recording audio tracks:', mixedRecorder.stream.getAudioTracks().length);
+      console.log('Recording video tracks:', mixedRecorder.stream.getVideoTracks().length);
 
       chunksRef.current = [];
       meetingIdRef.current = meeting.id;
       recordingStartTimeRef.current = startTime;
       mediaRecorderRef.current = recorder;
-      sceneRecorderRef.current = sceneRecorder;
+      mixedRecorderRef.current = mixedRecorder;
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -479,7 +454,7 @@ function useRecorder(participants, roomId, meetingTitle = '') {
         }
       };
 
-      await sceneRecorder.start();
+      await mixedRecorder.start();
       recorder.start(1000);
       setMeetingId(meeting.id);
       setRecordingStartTime(startTime);
@@ -497,7 +472,7 @@ function useRecorder(participants, roomId, meetingTitle = '') {
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
     const id = meetingIdRef.current;
-    const sceneRecorder = sceneRecorderRef.current;
+    const mixedRecorder = mixedRecorderRef.current;
 
     if (!recorder || recorder.state === 'inactive' || !id) {
       return null;
@@ -519,13 +494,13 @@ function useRecorder(participants, roomId, meetingTitle = '') {
           setError(recordingError.message);
           reject(recordingError);
         } finally {
-          await sceneRecorder?.stop().catch((sceneError) => {
-            console.error('Failed to stop recording scene:', sceneError);
+          await mixedRecorder?.stop().catch((sceneError) => {
+            console.error('Failed to stop mixed recorder:', sceneError);
           });
 
           chunksRef.current = [];
           mediaRecorderRef.current = null;
-          sceneRecorderRef.current = null;
+          mixedRecorderRef.current = null;
           meetingIdRef.current = null;
           recordingStartTimeRef.current = null;
           setIsRecording(false);

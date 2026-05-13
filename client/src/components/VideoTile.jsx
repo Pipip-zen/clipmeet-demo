@@ -1,23 +1,30 @@
 import { useEffect, useRef } from 'react';
 
-function VideoTile({ name, isMuted, isCameraOff, isLocal, stream }) {
+function VideoTile({ name, isMuted, isCameraOff, isLocal, muted = false, stream }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (!videoRef.current) {
+    const videoElement = videoRef.current;
+    if (!videoElement) {
       return;
     }
 
-    const videoElement = videoRef.current;
-    videoElement.srcObject = stream || null;
+    if (videoElement.srcObject !== stream) {
+      videoElement.srcObject = stream || null;
+    }
 
     if (!stream) {
       return;
     }
 
-    videoElement.play().catch((playError) => {
-      console.error('Failed to start participant media playback:', playError);
-    });
+    const playPromise = videoElement.play();
+    if (playPromise !== undefined) {
+      playPromise.catch((playError) => {
+        if (playError.name !== 'AbortError') {
+          console.error('Video play error:', playError);
+        }
+      });
+    }
   }, [stream]);
 
   return (
@@ -29,7 +36,7 @@ function VideoTile({ name, isMuted, isCameraOff, isLocal, stream }) {
             className="video-tile__video"
             autoPlay
             playsInline
-            muted
+            muted={muted}
           />
         ) : (
           <div className="video-tile__avatar" aria-hidden="true">

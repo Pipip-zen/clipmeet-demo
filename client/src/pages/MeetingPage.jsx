@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ControlBar from '@/components/ControlBar';
+import LocalAudioMonitor from '@/components/LocalAudioMonitor';
 import MarkerPanel from '@/components/MarkerPanel';
-import ParticipantAudio from '@/components/ParticipantAudio';
 import TopBar from '@/components/TopBar';
 import VideoTile from '@/components/VideoTile';
 import { formatDuration, getMeetingLayout } from '@/lib/meetingLayout';
@@ -51,6 +51,7 @@ function MeetingPage() {
     leaveMeeting,
   } = useWebRTC(resolvedRoomId, participantName, localRoomName);
   const roomName = syncedRoomName || localRoomName;
+  const localStream = participants.find((participant) => participant.isLocal)?.stream || null;
   const {
     isRecording,
     meetingId,
@@ -137,20 +138,13 @@ function MeetingPage() {
             isMuted={participant.isMuted}
             isCameraOff={participant.isCameraOff}
             isLocal={participant.isLocal}
+            muted={participant.isLocal}
             stream={participant.stream}
           />
         ))}
       </section>
 
-      {participants.map((participant) => (
-        participant.stream ? (
-          <ParticipantAudio
-            key={`audio-${participant.id}`}
-            stream={participant.stream}
-            label={participant.name}
-          />
-        ) : null
-      ))}
+      <LocalAudioMonitor stream={localStream} />
 
       {isMarkerPanelOpen && isRecording ? (
         <MarkerPanel
