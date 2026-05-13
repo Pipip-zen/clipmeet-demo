@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import { useAuth } from '@/context/useAuth';
 import useLocalMedia from '@/hooks/useLocalMedia';
 import './LobbyPage.css';
 
@@ -20,15 +21,12 @@ function LobbyPage() {
   const normalizedRoomCode = roomCode.toUpperCase();
   const navigate = useNavigate();
   const videoRef = useRef(null);
-  const [participantName, setParticipantName] = useState('');
-  const [roomName, setRoomName] = useState(normalizedRoomCode);
+  const { user } = useAuth();
+  const [participantName, setParticipantName] = useState(() => user?.username || '');
+  const [roomName, setRoomName] = useState(() => readRoomName(normalizedRoomCode));
   const [roomExists, setRoomExists] = useState(false);
   const [roomError, setRoomError] = useState('');
   const { stream, isCamOn, isMicOn, toggleCam, toggleMic, error } = useLocalMedia();
-
-  useEffect(() => {
-    setRoomName(readRoomName(normalizedRoomCode));
-  }, [normalizedRoomCode]);
 
   useEffect(() => {
     const socket = io(SIGNALING_SERVER_URL, {

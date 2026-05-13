@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { API_BASE_URL, authFetch } from '@/lib/api';
 import './DashboardPage.css';
-
-const API_BASE_URL = 'http://localhost:3001/api';
 
 function formatDate(value) {
   if (!value) {
@@ -45,7 +44,7 @@ function DashboardPage() {
         setIsLoading(true);
         setError('');
 
-        const response = await fetch(`${API_BASE_URL}/meetings`);
+        const response = await authFetch(`${API_BASE_URL}/meetings`);
         if (!response.ok) {
           const body = await response.json();
           throw new Error(body.error || 'Failed to load meetings.');

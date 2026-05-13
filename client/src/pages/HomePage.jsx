@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import { useAuth } from '@/context/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
@@ -15,6 +16,12 @@ function HomePage() {
   const [joinError, setJoinError] = useState('');
   const [isCheckingRoom, setIsCheckingRoom] = useState(false);
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   const handleCreateRoom = () => {
     navigate('/create-room');
@@ -58,6 +65,15 @@ function HomePage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+      <div className="home-auth-bar">
+        <span>
+          Halo, <strong>{user?.username}</strong>
+        </span>
+        <Button type="button" variant="outline" onClick={handleLogout}>
+          Logout
+        </Button>
+      </div>
+
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-4xl font-bold tracking-tight text-primary">ClipMeet</CardTitle>

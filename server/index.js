@@ -2,12 +2,14 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 
 const path = require('path');
 const meetingsRouter = require('./routes/meetings');
+const authRouter = require('./routes/auth');
 
 // Setup CORS
 app.use(cors({
@@ -22,6 +24,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/clips', express.static(path.join(__dirname, '../clips')));
 
 // Setup Routes
+app.use('/api', authRouter);
 app.use('/api', meetingsRouter);
 
 // Endpoint /health untuk cek status server
@@ -309,7 +312,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });

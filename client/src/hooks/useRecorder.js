@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { API_BASE_URL, authFetch, getAuthHeaders } from '@/lib/api';
 import { formatDuration, getMeetingLayout } from '@/lib/meetingLayout';
 
-const API_BASE_URL = 'http://localhost:3001/api';
 const PREFERRED_MIME_TYPE = 'video/webm;codecs=vp8,opus';
 const RECORDING_WIDTH = 1920;
 const RECORDING_HEIGHT = 1080;
@@ -379,7 +379,7 @@ function useRecorder(participants, roomId, meetingTitle = '') {
       ? `Meeting ${meetingTitle}`
       : `Meeting ${roomId}`;
 
-    const response = await fetch(`${API_BASE_URL}/meetings`, {
+    const response = await authFetch(`${API_BASE_URL}/meetings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -399,6 +399,7 @@ function useRecorder(participants, roomId, meetingTitle = '') {
 
     const response = await fetch(`${API_BASE_URL}/meetings/${id}/upload`, {
       method: 'POST',
+      headers: getAuthHeaders(),
       body: formData,
     });
 
@@ -406,7 +407,7 @@ function useRecorder(participants, roomId, meetingTitle = '') {
   }, []);
 
   const endMeeting = useCallback(async (id) => {
-    const response = await fetch(`${API_BASE_URL}/meetings/${id}/end`, {
+    const response = await authFetch(`${API_BASE_URL}/meetings/${id}/end`, {
       method: 'PATCH',
     });
 

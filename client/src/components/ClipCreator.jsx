@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
-
-const API_BASE_URL = 'http://localhost:3001/api';
+import { API_BASE_URL, authFetch } from '@/lib/api';
 
 function ClipCreator({ meetingId, markers, onClipCreated }) {
   const [startMarkerId, setStartMarkerId] = useState('');
@@ -31,7 +30,7 @@ function ClipCreator({ meetingId, markers, onClipCreated }) {
       setIsLoading(true);
       setError('');
 
-      const response = await fetch(`${API_BASE_URL}/clips`, {
+      const response = await authFetch(`${API_BASE_URL}/clips`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,3 +1,27 @@
+.home-auth-bar {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--background));
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.12);
+}
+
+.home-auth-bar span {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.9rem;
+}
+
+.home-auth-bar strong {
+  color: hsl(var(--foreground));
+}
+
 .home-room-code-input {
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -8,4 +32,12 @@
   color: #dc2626;
   font-size: 0.875rem;
   line-height: 1.25rem;
+}
+
+@media (max-width: 640px) {
+  .home-auth-bar {
+    left: 16px;
+    right: 16px;
+    justify-content: space-between;
+  }
 }

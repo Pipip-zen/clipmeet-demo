@@ -6,6 +6,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const authenticateToken = require('../middleware/auth');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
@@ -25,13 +26,13 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // POST /api/meetings — buat record meeting baru.
-router.post('/meetings', (req, res) => {
+router.post('/meetings', authenticateToken, (req, res) => {
   const { title, roomId } = req.body;
   if (!title || !roomId) {
     return res.status(400).json({ error: 'Title and roomId are required' });
   }
   try {
-    const meeting = db.createMeeting(title, roomId);
+    const meeting = db.createMeeting(title, roomId, req.user.userId);
     res.status(201).json(meeting);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -39,9 +40,9 @@ router.post('/meetings', (req, res) => {
 });
 
 // GET /api/meetings — ambil semua meeting, urutkan terbaru dulu.
-router.get('/meetings', (req, res) => {
+router.get('/meetings', authenticateToken, (req, res) => {
   try {
-    const meetings = db.getAllMeetings();
+    const meetings = db.getAllMeetings(req.user.userId);
     res.json(meetings);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -49,9 +50,9 @@ router.get('/meetings', (req, res) => {
 });
 
 // GET /api/meetings/:id — ambil detail satu meeting beserta markers dan clips-nya.
-router.get('/meetings/:id', (req, res) => {
+router.get('/meetings/:id', authenticateToken, (req, res) => {
   try {
-    const meeting = db.getMeetingById(req.params.id);
+    const meeting = db.getMeetingById(req.params.id, req.user.userId);
     if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
     res.json(meeting);
   } catch (err) {
@@ -60,7 +61,7 @@ router.get('/meetings/:id', (req, res) => {
 });
 
 // POST /api/meetings/:id/upload — terima file .webm dari client
-router.post('/meetings/:id/upload', upload.single('video'), (req, res) => {
+router.post('/meetings/:id/upload', authenticateToken, upload.single('video'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file provided' });
   }
@@ -68,7 +69,8 @@ router.post('/meetings/:id/upload', upload.single('video'), (req, res) => {
   try {
     // Simpan relative path untuk diakses via express.static nanti
     const filePath = `/uploads/${req.file.filename}`;
-    const meeting = db.updateMeetingFile(req.params.id, filePath);
+    const meeting = db.updateMeetingFile(req.params.id, filePath, req.user.userId);
+    if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
     res.json(meeting);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -76,9 +78,10 @@ router.post('/meetings/:id/upload', upload.single('video'), (req, res) => {
 });
 
 // PATCH /api/meetings/:id/end — update ended_at meeting.
-router.patch('/meetings/:id/end', (req, res) => {
+router.patch('/meetings/:id/end', authenticateToken, (req, res) => {
   try {
-    const meeting = db.endMeeting(req.params.id);
+    const meeting = db.endMeeting(req.params.id, req.user.userId);
+    if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
     res.json(meeting);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -86,12 +89,15 @@ router.patch('/meetings/:id/end', (req, res) => {
 });
 
 // POST /api/meetings/:id/markers — tambah marker ke DB.
-router.post('/meetings/:id/markers', (req, res) => {
+router.post('/meetings/:id/markers', authenticateToken, (req, res) => {
   const { label, timestamp_seconds } = req.body;
   if (!label || timestamp_seconds === undefined) {
     return res.status(400).json({ error: 'Label and timestamp_seconds are required' });
   }
   try {
+    const meeting = db.getMeetingById(req.params.id, req.user.userId);
+    if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+
     const marker = db.createMarker(req.params.id, label, timestamp_seconds);
     res.status(201).json(marker);
   } catch (err) {
@@ -100,14 +106,14 @@ router.post('/meetings/:id/markers', (req, res) => {
 });
 
 // POST /api/clips — Buat clip video menggunakan FFmpeg
-router.post('/clips', (req, res) => {
+router.post('/clips', authenticateToken, (req, res) => {
   const { meetingId, label, startTime, endTime } = req.body;
   if (!meetingId || startTime === undefined || endTime === undefined) {
     return res.status(400).json({ error: 'meetingId, startTime, and endTime are required' });
   }
 
   try {
-    const meeting = db.getMeetingById(meetingId);
+    const meeting = db.getMeetingById(meetingId, req.user.userId);
     if (!meeting || !meeting.file_path) {
       return res.status(404).json({ error: 'Meeting or source video file not found' });
     }

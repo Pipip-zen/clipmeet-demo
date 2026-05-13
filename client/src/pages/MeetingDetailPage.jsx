@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import ClipCreator from '@/components/ClipCreator';
+import { API_BASE_URL, authFetch } from '@/lib/api';
 import './MeetingDetailPage.css';
 
-const API_BASE_URL = 'http://localhost:3001/api';
 const SERVER_BASE_URL = 'http://localhost:3001';
 
 function toServerUrl(filePath) {
@@ -56,7 +56,7 @@ function MeetingDetailPage() {
         setIsLoading(true);
         setError('');
 
-        const response = await fetch(`${API_BASE_URL}/meetings/${meetingId}`);
+        const response = await authFetch(`${API_BASE_URL}/meetings/${meetingId}`);
         if (!response.ok) {
           const body = await response.json();
           throw new Error(body.error || 'Failed to load meeting.');

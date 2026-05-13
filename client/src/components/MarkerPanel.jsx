@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
-
-const API_BASE_URL = 'http://localhost:3001/api';
+import { API_BASE_URL, authFetch } from '@/lib/api';
 
 function formatTimestamp(seconds) {
   const minutes = String(Math.floor(seconds / 60)).padStart(2, '0');
@@ -33,7 +32,7 @@ function MarkerPanel({ meetingId, recordingStartTime, onClose }) {
       setIsSubmitting(true);
       setError('');
 
-      const response = await fetch(`${API_BASE_URL}/meetings/${meetingId}/markers`, {
+      const response = await authFetch(`${API_BASE_URL}/meetings/${meetingId}/markers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
